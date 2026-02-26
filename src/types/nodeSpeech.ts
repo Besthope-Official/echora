@@ -39,10 +39,3 @@ export type NodeSpeechModel = {
 	sourceExtensionId: string;
 	version?: string;
 };
-
-export type NodeSpeechSession = {
-	transcriber: NodeSpeechTranscriber;
-	timeout: NodeJS.Timeout;
-	runtime: NodeSpeechRuntime;
-	stopping: boolean;
-};

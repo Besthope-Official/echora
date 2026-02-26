@@ -8,10 +8,12 @@
   },
   "publisher": "Besthope",
   "categories": [
-    "AI", "Chat", "Education", "Other"
+    "AI",
+    "Chat",
+    "Education",
+    "Other"
   ],
-  "activationEvents": [
-  ],
+  "activationEvents": [],
   "main": "./dist/extension.js",
   "extensionKind": [
     "ui"
@@ -34,6 +36,12 @@
           "type": "string",
           "default": "auto",
           "description": "Preferred locale for voice input recognition. Use 'auto' to follow VS Code UI language, or set e.g. 'zh-CN', 'en-US'."
+        },
+        "echora.stt.sessionDurationMs": {
+          "type": "number",
+          "default": 20000,
+          "minimum": 0,
+          "description": "Maximum duration (ms) for a voice input session. Set to 0 to disable auto-stop (future VAD mode). Default: 20000."
         }
       }
     }
@@ -43,23 +51,26 @@
     "compile": "webpack",
     "watch": "webpack --watch",
     "package": "webpack --mode production --devtool hidden-source-map",
-    "compile-tests": "tsc -p tsconfig.test.json",
+    "clean-tests-out": "node -e \"require('fs').rmSync('out/test', { recursive: true, force: true })\"",
+    "compile-tests": "pnpm run clean-tests-out && tsc -p tsconfig.test.json",
     "watch-tests": "tsc -p tsconfig.test.json -w",
     "pretest": "pnpm run compile-tests && pnpm run compile && pnpm run lint",
     "lint": "eslint src",
-    "test": "vscode-test"
+    "test": "vscode-test",
+    "prepare": "husky"
   },
   "devDependencies": {
-    "@types/vscode": "^1.105.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "22.x",
-    "typescript-eslint": "^8.54.0",
-    "eslint": "^9.39.2",
-    "typescript": "^5.9.3",
-    "ts-loader": "^9.5.4",
-    "webpack": "^5.104.1",
-    "webpack-cli": "^6.0.1",
+    "@types/vscode": "^1.105.0",
     "@vscode/test-cli": "^0.0.12",
-    "@vscode/test-electron": "^2.5.2"
+    "@vscode/test-electron": "^2.5.2",
+    "eslint": "^9.39.2",
+    "husky": "^9.1.7",
+    "ts-loader": "^9.5.4",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.54.0",
+    "webpack": "^5.104.1",
+    "webpack-cli": "^6.0.1"
   }
 }

@@ -1,21 +1,20 @@
-import * as path from 'path';
 import * as vscode from 'vscode';
-import type { NodeSpeechSession, NodeSpeechStatusResult } from '../../types/nodeSpeech';
 import { formatError } from '../../utils/errors';
-import { assertNodeSpeechUiHost } from './platform';
-import { resolveNodeSpeechRuntime } from './runtimeResolver';
-
-const NODE_SPEECH_SESSION_DURATION_MS = 20_000;
+import type { LogFn, TranscriberBackend } from './types';
 
 export class DictationService implements vscode.Disposable {
 	private outputChannel: vscode.OutputChannel | undefined;
-	private session: NodeSpeechSession | undefined;
+	private backend: TranscriberBackend | undefined;
+	private listeners: vscode.Disposable[] = [];
+	private timeout: NodeJS.Timeout | undefined;
+	private stopping = false;
+
+	constructor(private readonly createBackend: (log: LogFn) => Promise<TranscriberBackend>) {}
 
 	public async start(): Promise<void> {
 		const output = this.getOutputChannel();
 		output.show(true);
-		assertNodeSpeechUiHost();
-		if (this.session && !this.session.stopping) {
+		if (this.backend && !this.stopping) {
 			this.log('A voice input session is already running.');
 			return;
 		}
@@ -26,9 +25,10 @@ export class DictationService implements vscode.Disposable {
 			}.`
 		);
 		this.log(`Host runtime: platform=${process.platform}, arch=${process.arch}, node=${process.version}.`);
-		let runtime;
+
+		let backend: TranscriberBackend;
 		try {
-			runtime = await resolveNodeSpeechRuntime((message) => {
+			backend = await this.createBackend((message) => {
 				this.log(message);
 			});
 		} catch (error) {
@@ -38,42 +38,33 @@ export class DictationService implements vscode.Disposable {
 			return;
 		}
 
-		this.log(
-			`Loaded @vscode/node-speech from: ${path.join(
-				runtime.speechExtensionPath,
-				'node_modules',
-				'@vscode',
-				'node-speech'
-			)}`
-		);
-		this.log(`Using locale: ${runtime.locale}`);
-		this.log(`Using model: ${runtime.modelName}`);
-		this.log(`Model path: ${runtime.modelPath}`);
+		const durationMs = vscode.workspace
+			.getConfiguration('echora')
+			.get<number>('stt.sessionDurationMs', 20_000);
 
-		const transcriber = runtime.nodeSpeech.createTranscriber(
-			{
-				modelName: runtime.modelName,
-				modelPath: runtime.modelPath,
-				modelKey: runtime.modelKey,
-			},
-			(error, result) => {
-				void this.handleCallback(error, result);
-			}
+		this.listeners.push(
+			backend.onResult((r) => {
+				this.log(`${r.isFinal ? 'Final' : 'Partial'}: ${r.text}`);
+			}),
+			backend.onError((e) => {
+				this.log(`Error: ${e.message}`);
+				void this.stop('Stopped due to error.');
+			}),
+			backend.onDidStop(() => {
+				void this.stop('Backend stopped.');
+			})
 		);
 
-		const timeout = setTimeout(() => {
-			void this.stop(`Auto-stopped after ${NODE_SPEECH_SESSION_DURATION_MS / 1000}s.`);
-		}, NODE_SPEECH_SESSION_DURATION_MS);
+		if (durationMs > 0) {
+			this.timeout = setTimeout(() => {
+				void this.stop(`Auto-stopped after ${durationMs / 1000}s.`);
+			}, durationMs);
+		}
 
-		this.session = {
-			transcriber,
-			timeout,
-			runtime,
-			stopping: false,
-		};
+		this.backend = backend;
 
 		try {
-			transcriber.start();
+			backend.start();
 			this.log('Transcriber started. Speak now and check callback status logs below.');
 		} catch (error) {
 			const message = formatError(error);
@@ -84,26 +75,31 @@ export class DictationService implements vscode.Disposable {
 	}
 
 	public async stop(reason: string): Promise<void> {
-		const session = this.session;
-		if (!session || session.stopping) {
+		if (!this.backend || this.stopping) {
 			return;
 		}
-		session.stopping = true;
-		clearTimeout(session.timeout);
+		this.stopping = true;
+		clearTimeout(this.timeout);
+		this.timeout = undefined;
 		this.log(reason);
 
 		try {
-			session.transcriber.stop();
+			this.backend.stop();
 		} catch (error) {
-			this.log(`transcriber.stop() failed: ${formatError(error)}`);
+			this.log(`backend.stop() failed: ${formatError(error)}`);
 		}
 		try {
-			session.transcriber.dispose();
+			this.backend.dispose();
 		} catch (error) {
-			this.log(`transcriber.dispose() failed: ${formatError(error)}`);
+			this.log(`backend.dispose() failed: ${formatError(error)}`);
 		}
 
-		this.session = undefined;
+		for (const listener of this.listeners) {
+			listener.dispose();
+		}
+		this.listeners = [];
+		this.backend = undefined;
+		this.stopping = false;
 	}
 
 	public dispose(): void {
@@ -111,31 +107,6 @@ export class DictationService implements vscode.Disposable {
 		if (this.outputChannel) {
 			this.outputChannel.dispose();
 			this.outputChannel = undefined;
-		}
-	}
-
-	private async handleCallback(
-		error: Error | undefined | null,
-		result: NodeSpeechStatusResult
-	): Promise<void> {
-		const session = this.session;
-		if (!session) {
-			return;
-		}
-
-		if (error) {
-			this.log(`Callback error: ${error.message}`);
-			await this.stop('Stopped due to callback error.');
-			return;
-		}
-
-		const statusName =
-			session.runtime.nodeSpeech.TranscriptionStatusCode[result.status] ?? `STATUS_${result.status}`;
-		const text = typeof result.data === 'string' && result.data.length > 0 ? ` | ${result.data}` : '';
-		this.log(`Callback: ${statusName}${text}`);
-
-		if (statusName === 'ERROR' || statusName === 'STOPPED' || statusName === 'DISPOSED') {
-			await this.stop(`Stopped after ${statusName}.`);
 		}
 	}
 
