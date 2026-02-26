@@ -1,0 +1,65 @@
+{
+  "name": "echora",
+  "displayName": "Echora",
+  "description": "Echora is a VS Code extension that empowers your CLI agent with STT/TTS and makes it your best companion — chatting, learning, and working, always echoing to you.",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "publisher": "Besthope",
+  "categories": [
+    "AI", "Chat", "Education", "Other"
+  ],
+  "activationEvents": [
+  ],
+  "main": "./dist/extension.js",
+  "extensionKind": [
+    "ui"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "echora.startDictation",
+        "title": "Echora: Start Dictation"
+      },
+      {
+        "command": "echora.stopDictation",
+        "title": "Echora: Stop Dictation"
+      }
+    ],
+    "configuration": {
+      "title": "Echora",
+      "properties": {
+        "echora.nodeSpeech.locale": {
+          "type": "string",
+          "default": "auto",
+          "description": "Preferred locale for voice input recognition. Use 'auto' to follow VS Code UI language, or set e.g. 'zh-CN', 'en-US'."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "pnpm run package",
+    "compile": "webpack",
+    "watch": "webpack --watch",
+    "package": "webpack --mode production --devtool hidden-source-map",
+    "compile-tests": "tsc -p tsconfig.test.json",
+    "watch-tests": "tsc -p tsconfig.test.json -w",
+    "pretest": "pnpm run compile-tests && pnpm run compile && pnpm run lint",
+    "lint": "eslint src",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.105.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "22.x",
+    "typescript-eslint": "^8.54.0",
+    "eslint": "^9.39.2",
+    "typescript": "^5.9.3",
+    "ts-loader": "^9.5.4",
+    "webpack": "^5.104.1",
+    "webpack-cli": "^6.0.1",
+    "@vscode/test-cli": "^0.0.12",
+    "@vscode/test-electron": "^2.5.2"
+  }
+}
