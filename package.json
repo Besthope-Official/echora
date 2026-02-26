@@ -19,14 +19,31 @@
     "ui"
   ],
   "contributes": {
+    "icons": {
+      "echora-status": {
+        "description": "Echora status icon",
+        "default": {
+          "fontPath": "./media/font/fonts/echora.woff",
+          "fontCharacter": "\\F000"
+        }
+      }
+    },
     "commands": [
       {
         "command": "echora.startDictation",
-        "title": "Echora: Start Dictation"
+        "title": "Echora: Start Dictation (Manual)"
       },
       {
         "command": "echora.stopDictation",
-        "title": "Echora: Stop Dictation"
+        "title": "Echora: Stop Dictation (Manual)"
+      },
+      {
+        "command": "echora.startVoicePipeline",
+        "title": "Echora: Start Voice Pipeline"
+      },
+      {
+        "command": "echora.stopVoicePipeline",
+        "title": "Echora: Stop Voice Pipeline"
       }
     ],
     "configuration": {

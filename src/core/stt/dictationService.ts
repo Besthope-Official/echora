@@ -1,23 +1,25 @@
 import * as vscode from 'vscode';
 import { formatError } from '../../utils/errors';
+import { logWithScope, showSharedOutputChannel } from '../../utils/outputLogger';
 import type { LogFn, TranscriberBackend } from './types';
 
 export class DictationService implements vscode.Disposable {
-	private outputChannel: vscode.OutputChannel | undefined;
 	private backend: TranscriberBackend | undefined;
 	private listeners: vscode.Disposable[] = [];
 	private timeout: NodeJS.Timeout | undefined;
-	private stopping = false;
+	private sessionActive = false;
+	private activeSessionId = 0;
 
 	constructor(private readonly createBackend: (log: LogFn) => Promise<TranscriberBackend>) {}
 
 	public async start(): Promise<void> {
-		const output = this.getOutputChannel();
-		output.show(true);
-		if (this.backend && !this.stopping) {
+		if (this.sessionActive) {
 			this.log('A voice input session is already running.');
 			return;
 		}
+		showSharedOutputChannel(true);
+		const sessionId = ++this.activeSessionId;
+		this.sessionActive = true;
 
 		this.log(
 			`Starting voice input session. remoteName=${vscode.env.remoteName ?? 'none'}, uiKind=${
@@ -29,12 +31,23 @@ export class DictationService implements vscode.Disposable {
 		let backend: TranscriberBackend;
 		try {
 			backend = await this.createBackend((message) => {
+				if (!this.isCurrentSession(sessionId)) {
+					return;
+				}
 				this.log(message);
 			});
 		} catch (error) {
+			if (!this.isCurrentSession(sessionId)) {
+				return;
+			}
 			const message = formatError(error);
 			this.log(`Runtime initialization failed: ${message}`);
 			vscode.window.showErrorMessage(`Echora Voice Input: ${message}`);
+			this.endSession('Runtime initialization failed.');
+			return;
+		}
+		if (!this.isCurrentSession(sessionId)) {
+			this.disposeBackendInstance(backend);
 			return;
 		}
 
@@ -44,19 +57,31 @@ export class DictationService implements vscode.Disposable {
 
 		this.listeners.push(
 			backend.onResult((r) => {
+				if (!this.isCurrentSession(sessionId)) {
+					return;
+				}
 				this.log(`${r.isFinal ? 'Final' : 'Partial'}: ${r.text}`);
 			}),
 			backend.onError((e) => {
+				if (!this.isCurrentSession(sessionId)) {
+					return;
+				}
 				this.log(`Error: ${e.message}`);
 				void this.stop('Stopped due to error.');
 			}),
 			backend.onDidStop(() => {
+				if (!this.isCurrentSession(sessionId)) {
+					return;
+				}
 				void this.stop('Backend stopped.');
 			})
 		);
 
 		if (durationMs > 0) {
 			this.timeout = setTimeout(() => {
+				if (!this.isCurrentSession(sessionId)) {
+					return;
+				}
 				void this.stop(`Auto-stopped after ${durationMs / 1000}s.`);
 			}, durationMs);
 		}
@@ -64,34 +89,69 @@ export class DictationService implements vscode.Disposable {
 		this.backend = backend;
 
 		try {
+			if (!this.isCurrentSession(sessionId)) {
+				this.disposeBackendInstance(backend);
+				return;
+			}
 			backend.start();
+			if (!this.isCurrentSession(sessionId)) {
+				return;
+			}
 			this.log('Transcriber started. Speak now and check callback status logs below.');
 		} catch (error) {
+			if (!this.isCurrentSession(sessionId)) {
+				this.disposeBackendInstance(backend);
+				return;
+			}
 			const message = formatError(error);
 			this.log(`Failed to start transcriber: ${message}`);
-			await this.stop('Stopped because start() threw an error.');
 			vscode.window.showErrorMessage(`Echora Voice Input: start failed (${message})`);
+			this.endSession('Stopped because start() threw an error.');
 		}
 	}
 
 	public async stop(reason: string): Promise<void> {
-		if (!this.backend || this.stopping) {
+		if (!this.sessionActive) {
 			return;
 		}
-		this.stopping = true;
+		this.endSession(reason);
+	}
+
+	public dispose(): void {
+		this.endSession('Stopped because extension was deactivated.');
+	}
+
+	private endSession(reason: string): void {
+		const hadActiveSession =
+			this.sessionActive || this.backend !== undefined || this.listeners.length > 0 || this.timeout !== undefined;
+		if (!hadActiveSession) {
+			return;
+		}
+		this.activeSessionId += 1;
+		this.sessionActive = false;
 		clearTimeout(this.timeout);
 		this.timeout = undefined;
 		this.log(reason);
+		this.shutdownBackend();
+	}
 
-		try {
-			this.backend.stop();
-		} catch (error) {
-			this.log(`backend.stop() failed: ${formatError(error)}`);
-		}
-		try {
-			this.backend.dispose();
-		} catch (error) {
-			this.log(`backend.dispose() failed: ${formatError(error)}`);
+	private isCurrentSession(sessionId: number): boolean {
+		return this.activeSessionId === sessionId;
+	}
+
+	private shutdownBackend(): void {
+		const backend = this.backend;
+		if (backend) {
+			try {
+				backend.stop();
+			} catch (error) {
+				this.log(`backend.stop() failed: ${formatError(error)}`);
+			}
+			try {
+				backend.dispose();
+			} catch (error) {
+				this.log(`backend.dispose() failed: ${formatError(error)}`);
+			}
 		}
 
 		for (const listener of this.listeners) {
@@ -99,25 +159,22 @@ export class DictationService implements vscode.Disposable {
 		}
 		this.listeners = [];
 		this.backend = undefined;
-		this.stopping = false;
 	}
 
-	public dispose(): void {
-		void this.stop('Stopped because extension was deactivated.');
-		if (this.outputChannel) {
-			this.outputChannel.dispose();
-			this.outputChannel = undefined;
+	private disposeBackendInstance(backend: TranscriberBackend): void {
+		try {
+			backend.stop();
+		} catch {
+			// noop, stale session cleanup
 		}
-	}
-
-	private getOutputChannel(): vscode.OutputChannel {
-		if (!this.outputChannel) {
-			this.outputChannel = vscode.window.createOutputChannel('Echora Voice Input');
+		try {
+			backend.dispose();
+		} catch {
+			// noop, stale session cleanup
 		}
-		return this.outputChannel;
 	}
 
 	private log(message: string): void {
-		this.getOutputChannel().appendLine(`[${new Date().toLocaleTimeString()}] ${message}`);
+		logWithScope('DictationService', message);
 	}
 }
