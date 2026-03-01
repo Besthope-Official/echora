@@ -28,7 +28,7 @@ export class PipelineStatusBar implements vscode.Disposable {
 
 		switch (state) {
 			case 'idle':
-				this.item.text = '$(coffee) Echora: Idle';
+				this.item.text = '$(echora-status) Echora: Idle';
 				break;
 			case 'listening':
 				this.item.text = '$(unmute) Echora: Listening';

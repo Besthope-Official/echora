@@ -24,7 +24,7 @@
         {
           "id": "echora",
           "title": "Echora",
-          "icon": "$(mic)"
+          "icon": "media/icon.svg"
         }
       ]
     },
@@ -33,46 +33,74 @@
         {
           "type": "webview",
           "id": "echora.chatPanel",
-          "name": "Chat"
+          "name": "Chat",
+          "icon": "media/icon.svg"
         }
       ]
     },
     "icons": {
       "echora-status": {
         "description": "Echora status icon",
-        "default": "mic"
+        "default": {
+          "fontPath": "./media/icon-font/echora.woff",
+          "fontCharacter": "\\f101"
+        }
       }
     },
     "commands": [
       {
         "command": "echora.startDictation",
-        "title": "Echora: Start Dictation (Manual)"
+        "title": "Start Dictation (Manual)",
+        "category": "Echora",
+        "icon": "$(mic)"
       },
       {
         "command": "echora.stopDictation",
-        "title": "Echora: Stop Dictation (Manual)"
+        "title": "Stop Dictation (Manual)",
+        "category": "Echora",
+        "icon": "$(debug-stop)"
       },
       {
         "command": "echora.startVoicePipeline",
-        "title": "Echora: Start Voice Pipeline"
+        "title": "Start Voice Pipeline",
+        "category": "Echora",
+        "icon": "$(play)"
       },
       {
         "command": "echora.stopVoicePipeline",
-        "title": "Echora: Stop Voice Pipeline"
+        "title": "Stop Voice Pipeline",
+        "category": "Echora",
+        "icon": "$(stop)"
       }
     ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "echora.startVoicePipeline",
+          "when": "view == echora.chatPanel",
+          "group": "navigation@0"
+        },
+        {
+          "command": "echora.stopVoicePipeline",
+          "when": "view == echora.chatPanel",
+          "group": "navigation@1"
+        }
+      ]
+    },
     "configuration": {
       "title": "Echora",
       "properties": {
         "echora.nodeSpeech.locale": {
           "type": "string",
           "default": "auto",
+          "scope": "application",
           "description": "Preferred locale for voice input recognition. Use 'auto' to follow VS Code UI language, or set e.g. 'zh-CN', 'en-US'."
         },
         "echora.stt.sessionDurationMs": {
           "type": "number",
           "default": 20000,
           "minimum": 0,
+          "scope": "application",
           "description": "Maximum duration (ms) for a voice input session. Set to 0 to disable auto-stop (future VAD mode). Default: 20000."
         },
         "echora.pipeline.textConsumer": {
@@ -81,17 +109,24 @@
             "agent-sdk",
             "mock"
           ],
+          "enumDescriptions": [
+            "Use Claude Agent SDK for real AI responses.",
+            "Mock consumer for local smoke testing."
+          ],
           "default": "agent-sdk",
+          "scope": "window",
           "description": "Text consumer backend for the voice pipeline. Use 'agent-sdk' for Claude Agent SDK integration, or 'mock' for local smoke tests."
         },
         "echora.pipeline.remote": {
           "type": "string",
           "default": "",
+          "scope": "window",
           "markdownDescription": "**[Experimental]** Enable remote bridge for the voice pipeline. This feature is under development. Format: `wsl:<distro>` (e.g. `wsl:Ubuntu`) or `ssh:<host>`. Leave empty to run locally."
         },
         "echora.pipeline.enableTextEditingBeforeSend": {
           "type": "boolean",
           "default": false,
+          "scope": "window",
           "description": "When enabled, final voice transcription enters a review state in Echora sidebar and only sends after you click Send. When disabled (default), final transcription is sent immediately."
         }
       }
