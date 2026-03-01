@@ -8,6 +8,7 @@ import type { PipelineTextMessage } from '../../types/pipeline';
 import { formatError } from '../../utils/errors';
 import { logWithScope } from '../../utils/outputLogger';
 import type { ConsumerMessage, TextConsumer, TextConsumerOptions } from './types';
+import { buildPromptWithSystem } from './promptLoader';
 
 type AgentSdkQueryOptions = {
 	cwd?: string;
@@ -85,6 +86,7 @@ export class AgentSdkTextConsumer implements TextConsumer, vscode.Disposable {
 	constructor(
 		private readonly resolveWorkingDirectory: () => string | undefined,
 		private readonly extensionPath: string,
+		private readonly getSystemPrompt: () => string,
 		private readonly spawnClaudeCodeProcess?: (
 			options: AgentSdkSpawnOptions,
 			onStderr: (line: string) => void
@@ -121,6 +123,9 @@ export class AgentSdkTextConsumer implements TextConsumer, vscode.Disposable {
 			this.log(`using Claude executable path from SDK package: ${sdkCliPath}`);
 		}
 
+		const systemPrompt = this.getSystemPrompt();
+		const finalPrompt = buildPromptWithSystem(systemPrompt, message.text);
+
 		let accumulatedAssistantText = '';
 		let latestAssistantMessageId: string | undefined;
 		let latestAssistantSnapshot = '';
@@ -129,7 +134,7 @@ export class AgentSdkTextConsumer implements TextConsumer, vscode.Disposable {
 
 		try {
 			for await (const streamMessage of query({
-				prompt: message.text,
+				prompt: finalPrompt,
 				abortController,
 				options: {
 						cwd,

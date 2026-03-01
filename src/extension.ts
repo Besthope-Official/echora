@@ -5,6 +5,7 @@ import { VoicePipeline } from './core/pipeline';
 import { MockTextConsumer } from './core/consumer/mockTextConsumer';
 import { AgentSdkTextConsumer } from './core/consumer/agentSdkTextConsumer';
 import { resolveRemoteContext, createRemoteSpawner, resolveRemoteWorkingDirectory } from './core/consumer/remoteBridge';
+import { loadSystemPrompt } from './core/consumer/promptLoader';
 import type { TextConsumer } from './core/consumer/types';
 import { DictationService } from './core/stt/dictationService';
 import { createNodeSpeechBackend } from './core/stt/nodeSpeechBackend';
@@ -57,6 +58,7 @@ function createTextConsumer(context: vscode.ExtensionContext): TextConsumer {
 	return new AgentSdkTextConsumer(
 		() => resolveConsumerWorkingDirectory(context.extensionPath, remoteContext),
 		context.extensionPath,
+		() => loadSystemPrompt(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath),
 		spawnClaudeCodeProcess
 	);
 }

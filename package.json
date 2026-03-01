@@ -128,6 +128,19 @@
           "default": false,
           "scope": "window",
           "description": "When enabled, final voice transcription enters a review state in Echora sidebar and only sends after you click Send. When disabled (default), final transcription is sent immediately."
+        },
+        "echora.pipeline.systemPrompt": {
+          "type": "string",
+          "default": "",
+          "scope": "window",
+          "editPresentation": "multilineText",
+          "markdownDescription": "Custom system prompt prepended to every voice message. Leave empty to use the built-in default (concise, voice-optimized style). Overridden by `#echora.pipeline.systemPromptFile#` or a `.echora/prompt.md` file in the workspace root."
+        },
+        "echora.pipeline.systemPromptFile": {
+          "type": "string",
+          "default": "",
+          "scope": "window",
+          "markdownDescription": "Path to a `.md` file containing the system prompt. Relative paths resolve from workspace root. Takes priority over `#echora.pipeline.systemPrompt#` and `.echora/prompt.md`."
         }
       }
     }
