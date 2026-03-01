@@ -39,6 +39,9 @@ export class PipelineStatusBar implements vscode.Disposable {
 			case 'thinking':
 				this.item.text = '$(sync~spin) Echora: Thinking';
 				break;
+			case 'awaitingSend':
+				this.item.text = '$(edit) Echora: Awaiting Send';
+				break;
 			case 'speaking':
 				this.item.text = '$(megaphone) Echora: Speaking';
 				break;

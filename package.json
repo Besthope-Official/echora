@@ -19,13 +19,28 @@
     "ui"
   ],
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "echora",
+          "title": "Echora",
+          "icon": "$(mic)"
+        }
+      ]
+    },
+    "views": {
+      "echora": [
+        {
+          "type": "webview",
+          "id": "echora.chatPanel",
+          "name": "Chat"
+        }
+      ]
+    },
     "icons": {
       "echora-status": {
         "description": "Echora status icon",
-        "default": {
-          "fontPath": "./media/font/fonts/echora.woff",
-          "fontCharacter": "\\F000"
-        }
+        "default": "mic"
       }
     },
     "commands": [
@@ -59,6 +74,25 @@
           "default": 20000,
           "minimum": 0,
           "description": "Maximum duration (ms) for a voice input session. Set to 0 to disable auto-stop (future VAD mode). Default: 20000."
+        },
+        "echora.pipeline.textConsumer": {
+          "type": "string",
+          "enum": [
+            "agent-sdk",
+            "mock"
+          ],
+          "default": "agent-sdk",
+          "description": "Text consumer backend for the voice pipeline. Use 'agent-sdk' for Claude Agent SDK integration, or 'mock' for local smoke tests."
+        },
+        "echora.pipeline.remote": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "**[Experimental]** Enable remote bridge for the voice pipeline. This feature is under development. Format: `wsl:<distro>` (e.g. `wsl:Ubuntu`) or `ssh:<host>`. Leave empty to run locally."
+        },
+        "echora.pipeline.enableTextEditingBeforeSend": {
+          "type": "boolean",
+          "default": false,
+          "description": "When enabled, final voice transcription enters a review state in Echora sidebar and only sends after you click Send. When disabled (default), final transcription is sent immediately."
         }
       }
     }
@@ -89,5 +123,8 @@
     "typescript-eslint": "^8.54.0",
     "webpack": "^5.104.1",
     "webpack-cli": "^6.0.1"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.59"
   }
 }
