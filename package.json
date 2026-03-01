@@ -19,13 +19,28 @@
     "ui"
   ],
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "echora",
+          "title": "Echora",
+          "icon": "$(mic)"
+        }
+      ]
+    },
+    "views": {
+      "echora": [
+        {
+          "type": "webview",
+          "id": "echora.chatPanel",
+          "name": "Chat"
+        }
+      ]
+    },
     "icons": {
       "echora-status": {
         "description": "Echora status icon",
-        "default": {
-          "fontPath": "./media/font/fonts/echora.woff",
-          "fontCharacter": "\\F000"
-        }
+        "default": "mic"
       }
     },
     "commands": [
@@ -73,6 +88,11 @@
           "type": "string",
           "default": "",
           "markdownDescription": "**[Experimental]** Enable remote bridge for the voice pipeline. This feature is under development. Format: `wsl:<distro>` (e.g. `wsl:Ubuntu`) or `ssh:<host>`. Leave empty to run locally."
+        },
+        "echora.pipeline.enableTextEditingBeforeSend": {
+          "type": "boolean",
+          "default": false,
+          "description": "When enabled, final voice transcription enters a review state in Echora sidebar and only sends after you click Send. When disabled (default), final transcription is sent immediately."
         }
       }
     }

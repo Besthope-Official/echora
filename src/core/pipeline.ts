@@ -9,6 +9,8 @@ import { logWithScope, showSharedOutputChannel } from '../utils/outputLogger';
 export class VoicePipeline implements vscode.Disposable {
 	private readonly _onStateChanged = new vscode.EventEmitter<PipelineStateChange>();
 	public readonly onStateChanged = this._onStateChanged.event;
+	private readonly _onPendingTranscriptionChanged = new vscode.EventEmitter<string | undefined>();
+	public readonly onPendingTranscriptionChanged = this._onPendingTranscriptionChanged.event;
 
 	private backend: TranscriberBackend | undefined;
 	private backendListeners: vscode.Disposable[] = [];
@@ -17,14 +19,20 @@ export class VoicePipeline implements vscode.Disposable {
 	private activeSessionId = 0;
 	private processingTask: Promise<void> | undefined;
 	private processingAbortController: AbortController | undefined;
+	private pendingTranscription: string | undefined;
 
 	constructor(
 		private readonly createBackend: (log: LogFn) => Promise<TranscriberBackend>,
-		private readonly textConsumer: TextConsumer
+		private readonly textConsumer: TextConsumer,
+		private readonly isTranscriptionEditingEnabled: () => boolean = () => false
 	) {}
 
 	public getState(): PipelineState {
 		return this.state;
+	}
+
+	public getPendingTranscription(): string | undefined {
+		return this.pendingTranscription;
 	}
 
 	public async startListening(): Promise<void> {
@@ -106,7 +114,29 @@ export class VoicePipeline implements vscode.Disposable {
 		this.cancelProcessing('Stopped because extension was deactivated.');
 		void this.waitForProcessingToFinish();
 		this._onStateChanged.dispose();
+		this._onPendingTranscriptionChanged.dispose();
 		this.textConsumer.dispose();
+	}
+
+	public async submitPendingTranscription(text?: string): Promise<void> {
+		if (this.state !== 'awaitingSend') {
+			this.log(`submitPendingTranscription ignored because current state is '${this.state}'.`);
+			return;
+		}
+		if (this.processingTask) {
+			this.log('submitPendingTranscription ignored because processing is already running.');
+			return;
+		}
+
+		const nextText = (text ?? this.pendingTranscription ?? '').trim();
+		if (!nextText) {
+			this.log('submitPendingTranscription ignored because text is empty after trimming.');
+			return;
+		}
+
+		const sessionId = this.activeSessionId;
+		this.setPendingTranscription(undefined);
+		await this.startConsumerProcessing(sessionId, nextText, 'Pending transcription submitted by user');
 	}
 
 	private bindBackend(sessionId: number, backend: TranscriberBackend): void {
@@ -154,59 +184,18 @@ export class VoicePipeline implements vscode.Disposable {
 		this.log(`Final: ${text}`);
 		this.transitionTo('transcribing', 'Final transcription received');
 
-		const abortController = new AbortController();
-		this.processingAbortController = abortController;
-		const processingTask = this.processFinalResult(sessionId, text, abortController.signal);
-		this.processingTask = processingTask;
-
-		try {
-			await processingTask;
-		} finally {
-			if (this.processingTask === processingTask) {
-				this.processingTask = undefined;
-			}
-			if (this.processingAbortController === abortController) {
-				this.processingAbortController = undefined;
-			}
-			if (this.isCurrentSession(sessionId)) {
-				this.processingFinalResult = false;
-			}
+		this.shutdownBackend();
+		if (this.getState() !== 'transcribing') {
+			return;
 		}
-	}
 
-	private async processFinalResult(sessionId: number, text: string, signal: AbortSignal): Promise<void> {
-		try {
-			this.shutdownBackend();
-			if (this.getState() !== 'transcribing') {
-				return;
-			}
-
-			this.transitionTo('thinking', 'Dispatching text to consumer');
-			await this.textConsumer.consume(
-				{
-					text,
-					source: 'voice',
-					createdAt: Date.now(),
-				},
-				{ signal }
-			);
-			if (!this.isCurrentSession(sessionId)) {
-				return;
-			}
-			this.endSession('Consumer finished processing the message.');
-		} catch (error) {
-			if (isAbortError(error)) {
-				this.log('Message processing aborted.');
-				return;
-			}
-			if (!this.isCurrentSession(sessionId)) {
-				return;
-			}
-			const message = formatError(error);
-			this.log(`Message processing failed: ${message}`);
-			vscode.window.showErrorMessage(`Echora Voice Pipeline: ${message}`);
-			this.endSession('Reset after processing failure.');
+		if (this.isTranscriptionEditingEnabled()) {
+			this.setPendingTranscription(text);
+			this.transitionTo('awaitingSend', 'Waiting for user to review and send transcription');
+			return;
 		}
+
+		await this.startConsumerProcessing(sessionId, text, 'Dispatching text to consumer');
 	}
 
 	private handleBackendError(sessionId: number, error: Error): void {
@@ -235,13 +224,18 @@ export class VoicePipeline implements vscode.Disposable {
 
 	private endSession(reason: string): void {
 		const hadActiveSession =
-			this.state !== 'idle' || this.backend !== undefined || this.backendListeners.length > 0 || this.processingFinalResult;
+			this.state !== 'idle' ||
+			this.backend !== undefined ||
+			this.backendListeners.length > 0 ||
+			this.processingFinalResult ||
+			this.pendingTranscription !== undefined;
 		if (!hadActiveSession) {
 			return;
 		}
 		this.activeSessionId += 1;
 		this.processingFinalResult = false;
 		this.shutdownBackend();
+		this.setPendingTranscription(undefined);
 		this.transitionTo('idle', reason);
 	}
 
@@ -318,6 +312,62 @@ export class VoicePipeline implements vscode.Disposable {
 		} catch {
 			// swallow to keep stop/start sequencing resilient
 		}
+	}
+
+	private async startConsumerProcessing(sessionId: number, text: string, reason: string): Promise<void> {
+		const abortController = new AbortController();
+		this.processingAbortController = abortController;
+		const processingTask = this.consumeText(sessionId, text, reason, abortController.signal);
+		this.processingTask = processingTask;
+
+		try {
+			await processingTask;
+		} finally {
+			if (this.processingTask === processingTask) {
+				this.processingTask = undefined;
+			}
+			if (this.processingAbortController === abortController) {
+				this.processingAbortController = undefined;
+			}
+		}
+	}
+
+	private async consumeText(sessionId: number, text: string, reason: string, signal: AbortSignal): Promise<void> {
+		try {
+			this.transitionTo('thinking', reason);
+			await this.textConsumer.consume(
+				{
+					text,
+					source: 'voice',
+					createdAt: Date.now(),
+				},
+				{ signal }
+			);
+			if (!this.isCurrentSession(sessionId)) {
+				return;
+			}
+			this.endSession('Consumer finished processing the message.');
+		} catch (error) {
+			if (isAbortError(error)) {
+				this.log('Message processing aborted.');
+				return;
+			}
+			if (!this.isCurrentSession(sessionId)) {
+				return;
+			}
+			const message = formatError(error);
+			this.log(`Message processing failed: ${message}`);
+			vscode.window.showErrorMessage(`Echora Voice Pipeline: ${message}`);
+			this.endSession('Reset after processing failure.');
+		}
+	}
+
+	private setPendingTranscription(text: string | undefined): void {
+		if (this.pendingTranscription === text) {
+			return;
+		}
+		this.pendingTranscription = text;
+		this._onPendingTranscriptionChanged.fire(text);
 	}
 }
 

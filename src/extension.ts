@@ -9,18 +9,33 @@ import type { TextConsumer } from './core/consumer/types';
 import { DictationService } from './core/stt/dictationService';
 import { createNodeSpeechBackend } from './core/stt/nodeSpeechBackend';
 import { PipelineStatusBar } from './ui/statusBar';
+import { ChatPanel } from './ui/chatPanel';
 import { MicrophoneSessionCoordinator } from './core/microphoneSessionCoordinator';
 import { disposeSharedOutputChannel } from './utils/outputLogger';
 
 export function activate(context: vscode.ExtensionContext): void {
 	const dictationService = new DictationService((log) => createNodeSpeechBackend(log));
-	const pipeline = new VoicePipeline((log) => createNodeSpeechBackend(log), createTextConsumer(context));
+	const consumer = createTextConsumer(context);
+	const pipeline = new VoicePipeline(
+		(log) => createNodeSpeechBackend(log),
+		consumer,
+		() => vscode.workspace.getConfiguration('echora').get<boolean>('pipeline.enableTextEditingBeforeSend', false)
+	);
 	const sessionCoordinator = new MicrophoneSessionCoordinator(dictationService, pipeline);
 	const dictationCommands = registerDictationCommands(sessionCoordinator);
 	const pipelineCommands = registerPipelineCommands(sessionCoordinator);
 	const statusBar = new PipelineStatusBar(pipeline);
+	const chatPanel = new ChatPanel(context.extensionUri, pipeline, consumer);
 
-	context.subscriptions.push(dictationService, pipeline, dictationCommands, pipelineCommands, statusBar);
+	context.subscriptions.push(
+		dictationService,
+		pipeline,
+		dictationCommands,
+		pipelineCommands,
+		statusBar,
+		vscode.window.registerWebviewViewProvider('echora.chatPanel', chatPanel),
+		chatPanel
+	);
 }
 
 export function deactivate(): void {

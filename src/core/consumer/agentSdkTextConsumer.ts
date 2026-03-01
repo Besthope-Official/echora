@@ -2,12 +2,12 @@ import { createRequire } from 'module';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import type * as vscode from 'vscode';
+import * as vscode from 'vscode';
 import { pathToFileURL } from 'url';
 import type { PipelineTextMessage } from '../../types/pipeline';
 import { formatError } from '../../utils/errors';
 import { logWithScope } from '../../utils/outputLogger';
-import type { TextConsumer, TextConsumerOptions } from './types';
+import type { ConsumerMessage, TextConsumer, TextConsumerOptions } from './types';
 
 type AgentSdkQueryOptions = {
 	cwd?: string;
@@ -79,6 +79,8 @@ const AGENT_SDK_PACKAGE_NAME = ['@anthropic-ai', 'claude-agent-sdk'].join('/');
 
 export class AgentSdkTextConsumer implements TextConsumer, vscode.Disposable {
 	private queryPromise: Promise<AgentSdkQueryFn> | undefined;
+	private readonly _onMessage = new vscode.EventEmitter<ConsumerMessage>();
+	public readonly onMessage = this._onMessage.event;
 
 	constructor(
 		private readonly resolveWorkingDirectory: () => string | undefined,
@@ -112,6 +114,7 @@ export class AgentSdkTextConsumer implements TextConsumer, vscode.Disposable {
 
 		this.log(`received from ${message.source}: ${message.text}`);
 		this.log(`dispatching to Agent SDK. cwd=${cwd}`);
+		this._onMessage.fire({ type: 'userMessage', text: message.text });
 		this.log(`ANTHROPIC_BASE_URL=${process.env.ANTHROPIC_BASE_URL ?? '(not set)'}`);
 		this.log(`ANTHROPIC_API_KEY=${process.env.ANTHROPIC_API_KEY ? '***set***' : '(not set)'}`);
 		if (sdkCliPath) {
@@ -166,14 +169,15 @@ export class AgentSdkTextConsumer implements TextConsumer, vscode.Disposable {
 
 				accumulatedAssistantText += delta;
 				this.log(`assistant(delta): ${delta}`);
+				this._onMessage.fire({ type: 'assistantDelta', text: delta });
 			}
 		} catch (error) {
 			if (externalSignal?.aborted || isAbortError(error)) {
 				throw createAbortError();
 			}
-			throw new Error(
-				`Agent SDK consume failed: ${formatError(error)}${formatStderrSuffix(stderrLines)}`
-			);
+			const errorMessage = `Agent SDK consume failed: ${formatError(error)}${formatStderrSuffix(stderrLines)}`;
+			this._onMessage.fire({ type: 'error', message: errorMessage });
+			throw new Error(errorMessage);
 		} finally {
 			cleanupAbortBridge();
 		}
@@ -181,12 +185,15 @@ export class AgentSdkTextConsumer implements TextConsumer, vscode.Disposable {
 		const finalText = accumulatedAssistantText.trim();
 		if (finalText) {
 			this.log(`assistant(final): ${finalText}`);
+			this._onMessage.fire({ type: 'assistantDone', text: finalText });
 			return;
 		}
 		this.log('assistant(final): [empty response]');
 	}
 
-	public dispose(): void {}
+	public dispose(): void {
+		this._onMessage.dispose();
+	}
 
 	private async loadQueryFn(): Promise<AgentSdkQueryFn> {
 		if (!this.queryPromise) {

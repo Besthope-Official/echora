@@ -1,4 +1,4 @@
-export type PipelineState = 'idle' | 'listening' | 'transcribing' | 'thinking' | 'speaking';
+export type PipelineState = 'idle' | 'listening' | 'transcribing' | 'awaitingSend' | 'thinking' | 'speaking';
 
 export type PipelineMessageSource = 'voice';
 
