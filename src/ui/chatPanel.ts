@@ -1,26 +1,42 @@
-import * as vscode from 'vscode';
+﻿import * as vscode from 'vscode';
+import * as fs from 'fs';
 import type { VoicePipeline } from '../core/pipeline';
 import type { TextConsumer, ConsumerMessage } from '../core/consumer/types';
+import type { HistoryEntry } from '../core/session/historyStore';
 
 type HostToWebviewMessage =
 	| { type: 'userMessage'; text: string }
+	| { type: 'assistantThinkingDelta'; text: string }
 	| { type: 'assistantDelta'; text: string }
 	| { type: 'assistantDone' }
 	| { type: 'error'; message: string }
 	| { type: 'stateChanged'; state: string }
 	| { type: 'pendingTranscription'; text: string }
-	| { type: 'pendingCleared' };
+	| { type: 'pendingCleared' }
+	| { type: 'loadHistory'; entries: HistoryEntry[] }
+	| { type: 'toolUse'; toolUseId: string; toolName: string; inputSummary: string }
+	| { type: 'toolProgress'; toolUseId: string; toolName: string; elapsedSeconds: number }
+	| { type: 'toolResult'; toolUseId: string; isError: boolean; content: string }
+	| { type: 'toolUseSummary'; summary: string }
+	| { type: 'taskStarted'; taskId: string; description: string }
+	| { type: 'taskProgress'; taskId: string; description: string; lastToolName?: string };
 
-type WebviewToHostMessage = { type: 'sendPendingTranscription'; text: string };
+type WebviewToHostMessage =
+	| { type: 'sendPendingTranscription'; text: string }
+	| { type: 'webviewReady' };
 
 export class ChatPanel implements vscode.WebviewViewProvider, vscode.Disposable {
 	private readonly disposables: vscode.Disposable[] = [];
 	private view: vscode.WebviewView | undefined;
 
+	private messageQueue: ConsumerMessage[] = [];
+	private isWebviewReady: boolean = false;
+
 	constructor(
 		private readonly extensionUri: vscode.Uri,
 		private readonly pipeline: VoicePipeline,
-		consumer: TextConsumer
+		consumer: TextConsumer,
+		private readonly readHistory?: () => Promise<HistoryEntry[]>,
 	) {
 		if (consumer.onMessage) {
 			this.disposables.push(
@@ -44,21 +60,19 @@ export class ChatPanel implements vscode.WebviewViewProvider, vscode.Disposable 
 
 	public resolveWebviewView(webviewView: vscode.WebviewView): void {
 		this.view = webviewView;
+		const webviewRoot = this.getWebviewRoot();
 		webviewView.webview.options = {
 			enableScripts: true,
-			localResourceRoots: [this.extensionUri],
+			localResourceRoots: [webviewRoot],
 		};
-		webviewView.webview.html = this.getHtml();
+		webviewView.webview.html = this.getHtml(webviewView.webview, webviewRoot);
 		this.disposables.push(
 			webviewView.webview.onDidReceiveMessage((message: WebviewToHostMessage) => {
 				void this.handleWebviewMessage(message);
 			})
 		);
-		this.postMessage({ type: 'stateChanged', state: this.pipeline.getState() });
-		const pending = this.pipeline.getPendingTranscription();
-		if (typeof pending === 'string') {
-			this.postMessage({ type: 'pendingTranscription', text: pending });
-		}
+		// Initial state and history are sent in response to 'webviewReady' from the webview,
+		// ensuring the JS listener is registered before messages arrive.
 	}
 
 	public dispose(): void {
@@ -68,9 +82,20 @@ export class ChatPanel implements vscode.WebviewViewProvider, vscode.Disposable 
 	}
 
 	private handleConsumerMessage(msg: ConsumerMessage): void {
+		if (!this.isWebviewReady) {
+			this.messageQueue.push(msg);
+			return;
+		}
+		this.dispatchConsumerMessage(msg);
+	}
+
+	private dispatchConsumerMessage(msg: ConsumerMessage): void {
 		switch (msg.type) {
 			case 'userMessage':
 				this.postMessage({ type: 'userMessage', text: msg.text });
+				break;
+			case 'assistantThinkingDelta':
+				this.postMessage({ type: 'assistantThinkingDelta', text: msg.text });
 				break;
 			case 'assistantDelta':
 				this.postMessage({ type: 'assistantDelta', text: msg.text });
@@ -81,10 +106,54 @@ export class ChatPanel implements vscode.WebviewViewProvider, vscode.Disposable 
 			case 'error':
 				this.postMessage({ type: 'error', message: msg.message });
 				break;
+			case 'toolUse':
+				this.postMessage({ type: 'toolUse', toolUseId: msg.toolUseId, toolName: msg.toolName, inputSummary: msg.inputSummary });
+				break;
+			case 'toolProgress':
+				this.postMessage({ type: 'toolProgress', toolUseId: msg.toolUseId, toolName: msg.toolName, elapsedSeconds: msg.elapsedSeconds });
+				break;
+			case 'toolResult':
+				this.postMessage({ type: 'toolResult', toolUseId: msg.toolUseId, isError: msg.isError, content: msg.content });
+				break;
+			case 'toolUseSummary':
+				this.postMessage({ type: 'toolUseSummary', summary: msg.summary });
+				break;
+			case 'taskStarted':
+				this.postMessage({ type: 'taskStarted', taskId: msg.taskId, description: msg.description });
+				break;
+			case 'taskProgress':
+				this.postMessage({ type: 'taskProgress', taskId: msg.taskId, description: msg.description, lastToolName: msg.lastToolName });
+				break;
+			case 'sessionCreated':
+				break;
 		}
 	}
 
 	private async handleWebviewMessage(message: WebviewToHostMessage): Promise<void> {
+		if (message.type === 'webviewReady') {
+			this.postMessage({ type: 'stateChanged', state: this.pipeline.getState() });
+			const pending = this.pipeline.getPendingTranscription();
+			if (typeof pending === 'string') {
+				this.postMessage({ type: 'pendingTranscription', text: pending });
+			}
+			if (this.readHistory) {
+				try {
+					const entries = await this.readHistory();
+					if (entries.length > 0) {
+						this.postMessage({ type: 'loadHistory', entries });
+					}
+				} catch (err) {
+					console.error('Failed to load history:', err);
+					this.postMessage({ type: 'error', message: 'Failed to load chat history.' });
+				}
+			}
+			this.isWebviewReady = true;
+			for (const msg of this.messageQueue) {
+				this.dispatchConsumerMessage(msg);
+			}
+			this.messageQueue = [];
+			return;
+		}
 		if (message.type !== 'sendPendingTranscription') {
 			return;
 		}
@@ -100,206 +169,43 @@ export class ChatPanel implements vscode.WebviewViewProvider, vscode.Disposable 
 		void this.view?.webview.postMessage(message);
 	}
 
-	private getHtml(): string {
-		return /* html */ `<!DOCTYPE html>
+	private getWebviewRoot(): vscode.Uri {
+		return vscode.Uri.joinPath(this.extensionUri, 'dist', 'webview', 'chat');
+	}
+
+	private getHtml(webview: vscode.Webview, webviewRoot: vscode.Uri): string {
+		const templateUri = vscode.Uri.joinPath(webviewRoot, 'index.html');
+		const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(webviewRoot, 'styles.css'));
+		const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(webviewRoot, 'main.js'));
+
+		let template: string;
+		try {
+			template = fs.readFileSync(templateUri.fsPath, 'utf8');
+		} catch (error) {
+			return this.buildAssetLoadErrorHtml(error);
+		}
+
+		return template
+			.split('{{cspSource}}').join(webview.cspSource)
+			.split('{{styleUri}}').join(styleUri.toString())
+			.split('{{scriptUri}}').join(scriptUri.toString());
+	}
+
+	private buildAssetLoadErrorHtml(error: unknown): string {
+		const detail = error instanceof Error ? error.message : String(error);
+		return `<!DOCTYPE html>
 <html lang="en">
-<head>
-<meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-<style>
-	*{box-sizing:border-box;margin:0;padding:0}
-	body{
-		font-family:var(--vscode-font-family,sans-serif);
-		font-size:var(--vscode-font-size,13px);
-		color:var(--vscode-foreground);
-		background:var(--vscode-sideBar-background,transparent);
-		padding:8px;
-	}
-	#messages{display:flex;flex-direction:column;gap:8px}
-	.msg{
-		padding:8px 12px;
-		border-radius:6px;
-		white-space:pre-wrap;
-		word-break:break-word;
-		line-height:1.45;
-		max-width:100%;
-	}
-	.msg.user{
-		background:var(--vscode-input-background);
-		align-self:flex-end;
-	}
-	.msg.assistant{
-		background:var(--vscode-editor-background);
-		align-self:flex-start;
-	}
-	.msg.error{
-		background:var(--vscode-inputValidation-errorBackground,#5a1d1d);
-		border:1px solid var(--vscode-inputValidation-errorBorder,#be1100);
-		align-self:stretch;
-	}
-	#draft-wrap{
-		display:none;
-		margin-bottom:10px;
-	}
-	#draft-label{
-		font-size:0.85em;
-		opacity:0.8;
-		margin-bottom:4px;
-	}
-	#draft-input{
-		width:100%;
-		min-height:72px;
-		resize:vertical;
-		padding:8px;
-		border:1px solid var(--vscode-input-border,transparent);
-		border-radius:6px;
-		background:var(--vscode-input-background);
-		color:var(--vscode-input-foreground);
-		font-family:var(--vscode-editor-font-family,var(--vscode-font-family,sans-serif));
-	}
-	#draft-actions{
-		display:flex;
-		justify-content:flex-end;
-		margin-top:6px;
-	}
-	#send-btn{
-		padding:5px 10px;
-		border:1px solid var(--vscode-button-border,transparent);
-		background:var(--vscode-button-background);
-		color:var(--vscode-button-foreground);
-		border-radius:4px;
-		cursor:pointer;
-	}
-	#send-btn:disabled{
-		opacity:0.6;
-		cursor:not-allowed;
-	}
-	#state-indicator{
-		text-align:center;
-		padding:4px;
-		font-size:0.85em;
-		opacity:0.7;
-	}
-</style>
-</head>
-<body>
-	<div id="state-indicator"></div>
-	<div id="draft-wrap">
-		<div id="draft-label">Transcription ready. Edit and send.</div>
-		<textarea id="draft-input" placeholder="Review transcription before sending"></textarea>
-		<div id="draft-actions">
-			<button id="send-btn" type="button">Send</button>
-		</div>
-	</div>
-	<div id="messages"></div>
-	<script>
-	(function(){
-		const vscode = acquireVsCodeApi();
-		const container = document.getElementById('messages');
-		const stateEl = document.getElementById('state-indicator');
-		const draftWrap = document.getElementById('draft-wrap');
-		const draftInput = document.getElementById('draft-input');
-		const sendBtn = document.getElementById('send-btn');
-		let currentAssistantEl = null;
-		let hasPendingDraft = false;
-
-		sendBtn.addEventListener('click', sendPendingTranscription);
-		draftInput.addEventListener('keydown', e => {
-			if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-				e.preventDefault();
-				sendPendingTranscription();
-			}
-		});
-
-		window.addEventListener('message', e => {
-			const msg = e.data;
-			switch(msg.type){
-				case 'userMessage': {
-					finishAssistant();
-					const el = document.createElement('div');
-					el.className = 'msg user';
-					el.textContent = msg.text;
-					container.appendChild(el);
-					scrollToBottom();
-					break;
-				}
-				case 'assistantDelta': {
-					if(!currentAssistantEl){
-						currentAssistantEl = document.createElement('div');
-						currentAssistantEl.className = 'msg assistant';
-						container.appendChild(currentAssistantEl);
-					}
-					currentAssistantEl.textContent += msg.text;
-					scrollToBottom();
-					break;
-				}
-				case 'assistantDone': {
-					finishAssistant();
-					break;
-				}
-				case 'error': {
-					finishAssistant();
-					const el = document.createElement('div');
-					el.className = 'msg error';
-					el.textContent = msg.message;
-					container.appendChild(el);
-					scrollToBottom();
-					break;
-				}
-				case 'stateChanged': {
-					if(msg.state === 'idle'){
-						stateEl.textContent = '';
-					} else {
-						stateEl.textContent = msg.state === 'awaitingSend' ? 'awaiting send...' : msg.state + '...';
-					}
-					const isBusy = msg.state === 'thinking' || msg.state === 'transcribing';
-					if (hasPendingDraft) {
-						sendBtn.disabled = isBusy;
-					}
-					break;
-				}
-				case 'pendingTranscription': {
-					hasPendingDraft = true;
-					draftWrap.style.display = 'block';
-					draftInput.value = msg.text;
-					sendBtn.disabled = false;
-					draftInput.focus();
-					const len = draftInput.value.length;
-					draftInput.setSelectionRange(len, len);
-					scrollToBottom();
-					break;
-				}
-				case 'pendingCleared': {
-					hasPendingDraft = false;
-					draftInput.value = '';
-					sendBtn.disabled = false;
-					draftWrap.style.display = 'none';
-					break;
-				}
-			}
-		});
-
-		function finishAssistant(){
-			currentAssistantEl = null;
-		}
-
-		function scrollToBottom(){
-			requestAnimationFrame(() => {
-				window.scrollTo(0, document.body.scrollHeight);
-			});
-		}
-
-		function sendPendingTranscription(){
-			const text = draftInput.value;
-			if(!text.trim()){
-				return;
-			}
-			sendBtn.disabled = true;
-			vscode.postMessage({ type: 'sendPendingTranscription', text });
-		}
-	})();
-	</script>
-</body>
+<head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/></head>
+<body>Failed to load chat webview assets: ${this.escapeHtml(detail)}</body>
 </html>`;
+	}
+
+	private escapeHtml(value: string): string {
+		return value
+			.replace(/&/g, '&amp;')
+			.replace(/</g, '&lt;')
+			.replace(/>/g, '&gt;')
+			.replace(/"/g, '&quot;')
+			.replace(/'/g, '&#39;');
 	}
 }

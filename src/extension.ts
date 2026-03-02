@@ -12,21 +12,78 @@ import { createNodeSpeechBackend } from './core/stt/nodeSpeechBackend';
 import { PipelineStatusBar } from './ui/statusBar';
 import { ChatPanel } from './ui/chatPanel';
 import { MicrophoneSessionCoordinator } from './core/microphoneSessionCoordinator';
-import { disposeSharedOutputChannel } from './utils/outputLogger';
+import { disposeSharedOutputChannel, logWithScope } from './utils/outputLogger';
+import { SessionManager } from './core/session/sessionManager';
+import { HistoryStore } from './core/session/historyStore';
+import type { ThinkingStep } from './core/session/historyStore';
 
 export function activate(context: vscode.ExtensionContext): void {
+	const sessionManager = new SessionManager(context.workspaceState);
+	const historyStore = new HistoryStore(context.storageUri ?? context.globalStorageUri);
+	logWithScope('HistoryStore', `history file: ${(context.storageUri ?? context.globalStorageUri).fsPath}/history.jsonl`);
+
 	const dictationService = new DictationService((log) => createNodeSpeechBackend(log));
-	const consumer = createTextConsumer(context);
+	const consumer = createTextConsumer(context, sessionManager);
 	const pipeline = new VoicePipeline(
 		(log) => createNodeSpeechBackend(log),
 		consumer,
 		() => vscode.workspace.getConfiguration('echora').get<boolean>('pipeline.enableTextEditingBeforeSend', false)
 	);
+
+	if (consumer.onMessage) {
+		type PendingToolStep = { type: 'tool'; toolName: string; inputSummary: string; elapsedSeconds: number; isError: boolean };
+		type PendingStep = PendingToolStep | { type: 'task'; description: string };
+
+		let pendingUserText = '';
+		let turnStartMs: number | undefined;
+		const pendingSteps: PendingStep[] = [];
+		const pendingStepById = new Map<string, PendingToolStep>();
+
+		context.subscriptions.push(
+			consumer.onMessage((msg) => {
+				if (msg.type === 'userMessage') {
+					pendingUserText = msg.text;
+					pendingSteps.length = 0;
+					pendingStepById.clear();
+					turnStartMs = Date.now();
+				} else if (msg.type === 'toolUse') {
+					const step: PendingToolStep = { type: 'tool', toolName: msg.toolName, inputSummary: msg.inputSummary, elapsedSeconds: 0, isError: false };
+					pendingSteps.push(step);
+					pendingStepById.set(msg.toolUseId, step);
+				} else if (msg.type === 'toolProgress') {
+					const step = pendingStepById.get(msg.toolUseId);
+					if (step) { step.elapsedSeconds = msg.elapsedSeconds; }
+				} else if (msg.type === 'toolResult') {
+					const step = pendingStepById.get(msg.toolUseId);
+					if (step) { step.isError = msg.isError; }
+				} else if (msg.type === 'taskStarted') {
+					pendingSteps.push({ type: 'task', description: msg.description });
+				} else if (msg.type === 'assistantDone' && pendingUserText) {
+					const thinkingDurationSeconds = turnStartMs !== undefined ? Math.round((Date.now() - turnStartMs) / 1000) : 0;
+					const capturedSteps: ThinkingStep[] | undefined = pendingSteps.length > 0 ? [...pendingSteps] : undefined;
+					const sessionId = sessionManager.getSessionId() ?? '';
+					const userText = pendingUserText;
+					pendingUserText = '';
+					pendingSteps.length = 0;
+					pendingStepById.clear();
+					turnStartMs = undefined;
+					void historyStore.append({ timestamp: new Date().toISOString(), role: 'user', content: userText, sessionId })
+						.then(() => historyStore.append({ timestamp: new Date().toISOString(), role: 'assistant', content: msg.text, sessionId, thinkingSteps: capturedSteps, thinkingDurationSeconds }));
+				}
+			})
+		);
+	}
+
 	const sessionCoordinator = new MicrophoneSessionCoordinator(dictationService, pipeline);
 	const dictationCommands = registerDictationCommands(sessionCoordinator);
 	const pipelineCommands = registerPipelineCommands(sessionCoordinator);
 	const statusBar = new PipelineStatusBar(pipeline);
-	const chatPanel = new ChatPanel(context.extensionUri, pipeline, consumer);
+	const chatPanel = new ChatPanel(
+		context.extensionUri,
+		pipeline,
+		consumer,
+		() => historyStore.readAll(),
+	);
 
 	context.subscriptions.push(
 		dictationService,
@@ -43,7 +100,7 @@ export function deactivate(): void {
 	disposeSharedOutputChannel();
 }
 
-function createTextConsumer(context: vscode.ExtensionContext): TextConsumer {
+function createTextConsumer(context: vscode.ExtensionContext, sessionManager: SessionManager): TextConsumer {
 	const configured = vscode.workspace
 		.getConfiguration('echora')
 		.get<string>('pipeline.textConsumer', 'agent-sdk');
@@ -59,7 +116,9 @@ function createTextConsumer(context: vscode.ExtensionContext): TextConsumer {
 		() => resolveConsumerWorkingDirectory(context.extensionPath, remoteContext),
 		context.extensionPath,
 		() => loadSystemPrompt(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath),
-		spawnClaudeCodeProcess
+		spawnClaudeCodeProcess,
+		() => sessionManager.getSessionId(),
+		(sid) => { void sessionManager.setSessionId(sid); },
 	);
 }
 
