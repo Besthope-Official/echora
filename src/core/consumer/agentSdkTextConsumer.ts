@@ -97,7 +97,10 @@ export class AgentSdkTextConsumer implements TextConsumer, vscode.Disposable {
 		private readonly onSessionIdCaptured?: (id: string) => void,
 	) {}
 
-	public async consume(message: PipelineTextMessage, options?: TextConsumerOptions): Promise<void> {
+	public async consume(
+		message: PipelineTextMessage,
+		options?: TextConsumerOptions
+	): Promise<void> {
 		const query = await this.loadQueryFn();
 		const abortController = new AbortController();
 		const externalSignal = options?.signal;

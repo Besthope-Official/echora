@@ -11,7 +11,10 @@ export class MockTextConsumer implements TextConsumer, vscode.Disposable {
 
 	constructor(private readonly processingDelayMs = 2000) {}
 
-	public async consume(message: PipelineTextMessage, options?: TextConsumerOptions): Promise<void> {
+	public async consume(
+		message: PipelineTextMessage,
+		options?: TextConsumerOptions
+	): Promise<void> {
 		this.log(`received from ${message.source}: ${message.text}`);
 		this._onMessage.fire({ type: 'userMessage', text: message.text });
 
