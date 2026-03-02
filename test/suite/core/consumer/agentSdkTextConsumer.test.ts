@@ -1,5 +1,5 @@
 import assert from 'assert/strict';
-import { computeTextDelta, extractAssistantText } from '../../../../src/core/consumer/agentSdkTextConsumer';
+import { computeTextDelta, extractAssistantText, extractAssistantThinking } from '../../../../src/core/consumer/agentSdkTextConsumer';
 
 suite('agentSdkTextConsumer/extractAssistantText', () => {
 	test('returns empty string for non-array content', () => {
@@ -25,6 +25,35 @@ suite('agentSdkTextConsumer/extractAssistantText', () => {
 				},
 			}),
 			'Hello, world'
+		);
+	});
+});
+
+suite('agentSdkTextConsumer/extractAssistantThinking', () => {
+	test('returns empty string for non-array content', () => {
+		assert.equal(
+			extractAssistantThinking({
+				type: 'assistant',
+				message: { content: { type: 'thinking', thinking: 'hidden' } },
+			}),
+			''
+		);
+	});
+
+	test('concatenates only thinking blocks from assistant content', () => {
+		assert.equal(
+			extractAssistantThinking({
+				type: 'assistant',
+				message: {
+					content: [
+						{ type: 'thinking', thinking: 'step 1' },
+						{ type: 'tool_use', name: 'bash' },
+						{ type: 'text', text: 'visible answer' },
+						{ type: 'thinking', thinking: ' + step 2' },
+					],
+				},
+			}),
+			'step 1 + step 2'
 		);
 	});
 });

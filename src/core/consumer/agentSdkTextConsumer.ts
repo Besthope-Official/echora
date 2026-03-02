@@ -19,6 +19,7 @@ type AgentSdkQueryOptions = {
 	settingSources?: AgentSdkSettingSource[];
 	stderr?: (data: string) => void;
 	spawnClaudeCodeProcess?: (options: AgentSdkSpawnOptions) => AgentSdkSpawnedProcess;
+	resume?: string;
 };
 
 type AgentSdkSettingSource = 'user' | 'project' | 'local';
@@ -54,6 +55,7 @@ type AgentSdkQueryParams = {
 type AgentSdkAssistantContentBlock = {
 	type?: unknown;
 	text?: unknown;
+	thinking?: unknown;
 };
 
 type AgentSdkAssistantMessage = {
@@ -90,7 +92,9 @@ export class AgentSdkTextConsumer implements TextConsumer, vscode.Disposable {
 		private readonly spawnClaudeCodeProcess?: (
 			options: AgentSdkSpawnOptions,
 			onStderr: (line: string) => void
-		) => AgentSdkSpawnedProcess
+		) => AgentSdkSpawnedProcess,
+		private readonly getResumeSessionId: () => string | undefined = () => undefined,
+		private readonly onSessionIdCaptured?: (id: string) => void,
 	) {}
 
 	public async consume(message: PipelineTextMessage, options?: TextConsumerOptions): Promise<void> {
@@ -123,14 +127,24 @@ export class AgentSdkTextConsumer implements TextConsumer, vscode.Disposable {
 			this.log(`using Claude executable path from SDK package: ${sdkCliPath}`);
 		}
 
-		const systemPrompt = this.getSystemPrompt();
-		const finalPrompt = buildPromptWithSystem(systemPrompt, message.text);
-
 		let accumulatedAssistantText = '';
 		let latestAssistantMessageId: string | undefined;
 		let latestAssistantSnapshot = '';
+		let latestThinkingSnapshot = '';
+		let capturedSessionId: string | undefined;
+		const firedToolUseIds = new Set<string>();
 
 		const spawner = this.spawnClaudeCodeProcess;
+		const resumeSessionId = options?.resumeSessionId ?? this.getResumeSessionId();
+		const shouldInjectSystemPrompt = !resumeSessionId;
+		const finalPrompt = shouldInjectSystemPrompt
+			? buildPromptWithSystem(this.getSystemPrompt(), message.text)
+			: message.text;
+		this.log(
+			shouldInjectSystemPrompt
+				? 'injecting Echora system prompt for a new Claude session.'
+				: `reusing Claude session ${resumeSessionId}; sending user text without re-injecting system prompt.`
+		);
 
 		try {
 			for await (const streamMessage of query({
@@ -144,18 +158,47 @@ export class AgentSdkTextConsumer implements TextConsumer, vscode.Disposable {
 						pathToClaudeCodeExecutable: sdkCliPath,
 						settingSources: ['user', 'project', 'local'],
 						stderr: onStderr,
+						resume: resumeSessionId,
 						spawnClaudeCodeProcess: spawner
 						? (spawnOptions) => spawner(spawnOptions, onStderr)
 						: undefined,
 				},
 			})) {
+				if (!capturedSessionId) {
+					const sid = (streamMessage as { session_id?: unknown }).session_id;
+					if (typeof sid === 'string') {
+						capturedSessionId = sid;
+						this.onSessionIdCaptured?.(sid);
+						this._onMessage.fire({ type: 'sessionCreated', sessionId: sid });
+					}
+				}
 				if (isResultError(streamMessage)) {
 					throw new Error(buildResultErrorMessage(streamMessage, stderrLines));
 				}
-				if (streamMessage.type !== 'assistant') {
-					if (streamMessage.type === 'auth_status' && typeof streamMessage.error === 'string') {
+
+				if (streamMessage.type === 'tool_progress') {
+					this.handleToolProgress(streamMessage);
+					continue;
+				}
+				if (streamMessage.type === 'tool_use_summary') {
+					this.handleToolUseSummary(streamMessage);
+					continue;
+				}
+				if (streamMessage.type === 'user') {
+					this.handleSdkUserMessage(streamMessage);
+					continue;
+				}
+				if (streamMessage.type === 'system') {
+					this.handleSdkSystemMessage(streamMessage);
+					continue;
+				}
+				if (streamMessage.type === 'auth_status') {
+					if (typeof streamMessage.error === 'string') {
 						this.log(`auth_status error: ${streamMessage.error}`);
 					}
+					continue;
+				}
+				if (streamMessage.type !== 'assistant') {
 					continue;
 				}
 
@@ -163,6 +206,22 @@ export class AgentSdkTextConsumer implements TextConsumer, vscode.Disposable {
 				if (assistantMessageId && assistantMessageId !== latestAssistantMessageId) {
 					latestAssistantMessageId = assistantMessageId;
 					latestAssistantSnapshot = '';
+					latestThinkingSnapshot = '';
+				}
+
+				for (const block of extractToolUseBlocks(streamMessage)) {
+					if (!firedToolUseIds.has(block.toolUseId)) {
+						firedToolUseIds.add(block.toolUseId);
+						this._onMessage.fire({ type: 'toolUse', ...block });
+					}
+				}
+
+				const nextThinkingSnapshot = extractAssistantThinking(streamMessage);
+				const thinkingDelta = computeTextDelta(latestThinkingSnapshot, nextThinkingSnapshot);
+				latestThinkingSnapshot = nextThinkingSnapshot;
+				if (thinkingDelta) {
+					this.log(`assistant(thinking-delta): ${thinkingDelta}`);
+					this._onMessage.fire({ type: 'assistantThinkingDelta', text: thinkingDelta });
 				}
 
 				const nextAssistantSnapshot = extractAssistantText(streamMessage);
@@ -198,6 +257,91 @@ export class AgentSdkTextConsumer implements TextConsumer, vscode.Disposable {
 
 	public dispose(): void {
 		this._onMessage.dispose();
+	}
+
+	private handleToolProgress(streamMessage: AgentSdkStreamMessage): void {
+		const msg = streamMessage as unknown as {
+			tool_use_id?: unknown; tool_name?: unknown; elapsed_time_seconds?: unknown;
+		};
+		if (typeof msg.tool_use_id !== 'string' || typeof msg.tool_name !== 'string') {
+			return;
+		}
+		const elapsedSeconds = Number(msg.elapsed_time_seconds) || 0;
+		this.log(`tool_progress: ${msg.tool_name} (${elapsedSeconds.toFixed(1)}s)`);
+		this._onMessage.fire({ type: 'toolProgress', toolUseId: msg.tool_use_id, toolName: msg.tool_name, elapsedSeconds });
+	}
+
+	private handleToolUseSummary(streamMessage: AgentSdkStreamMessage): void {
+		const msg = streamMessage as unknown as { summary?: unknown };
+		if (typeof msg.summary === 'string') {
+			this.log(`tool_use_summary: ${msg.summary}`);
+			this._onMessage.fire({ type: 'toolUseSummary', summary: msg.summary });
+		}
+	}
+
+	private handleSdkUserMessage(streamMessage: AgentSdkStreamMessage): void {
+		const msg = streamMessage as unknown as {
+			isSynthetic?: boolean;
+			message?: { content?: unknown };
+		};
+		if (msg.isSynthetic) {
+			return;
+		}
+		const content = msg.message?.content;
+		if (!Array.isArray(content)) {
+			return;
+		}
+		for (const block of content) {
+			if (!block || typeof block !== 'object') {
+				continue;
+			}
+			const b = block as { type?: unknown; tool_use_id?: unknown; content?: unknown; is_error?: unknown };
+			if (b.type !== 'tool_result' || typeof b.tool_use_id !== 'string') {
+				continue;
+			}
+			this._onMessage.fire({
+				type: 'toolResult',
+				toolUseId: b.tool_use_id,
+				isError: b.is_error === true,
+				content: formatToolResultContent(b.content),
+			});
+		}
+	}
+
+	private handleSdkSystemMessage(streamMessage: AgentSdkStreamMessage): void {
+		const msg = streamMessage as unknown as { subtype?: unknown; [key: string]: unknown };
+		const subtype = msg.subtype;
+		if (subtype === 'init') {
+			this.log(`system/init: model=${String(msg.model)}, tools=${JSON.stringify(msg.tools)}`);
+		} else if (subtype === 'task_started') {
+			const taskId = msg.task_id;
+			const description = msg.description;
+			if (typeof taskId === 'string' && typeof description === 'string') {
+				this.log(`task_started: ${description}`);
+				this._onMessage.fire({ type: 'taskStarted', taskId, description });
+			}
+		} else if (subtype === 'task_progress') {
+			const taskId = msg.task_id;
+			const description = msg.description;
+			const lastToolName = msg.last_tool_name;
+			if (typeof taskId === 'string' && typeof description === 'string') {
+				this._onMessage.fire({
+					type: 'taskProgress',
+					taskId,
+					description,
+					lastToolName: typeof lastToolName === 'string' ? lastToolName : undefined,
+				});
+			}
+		} else if (subtype === 'task_notification') {
+			const summary = msg.summary;
+			if (typeof summary === 'string') {
+				this.log(`task_notification: ${summary}`);
+			}
+		} else if (subtype === 'status' && msg.status) {
+			this.log(`system/status: ${String(msg.status)}`);
+		} else if (subtype === 'compact_boundary') {
+			this.log('system/compact_boundary');
+		}
 	}
 
 	private async loadQueryFn(): Promise<AgentSdkQueryFn> {
@@ -384,6 +528,25 @@ export function extractAssistantText(streamMessage: AgentSdkStreamMessage): stri
 	return text;
 }
 
+export function extractAssistantThinking(streamMessage: AgentSdkStreamMessage): string {
+	const content = streamMessage.message?.content;
+	if (!Array.isArray(content)) {
+		return '';
+	}
+
+	let text = '';
+	for (const block of content) {
+		if (!block || typeof block !== 'object') {
+			continue;
+		}
+		const candidate = block as AgentSdkAssistantContentBlock;
+		if (candidate.type === 'thinking' && typeof candidate.thinking === 'string') {
+			text += candidate.thinking;
+		}
+	}
+	return text;
+}
+
 export function computeTextDelta(previous: string, next: string): string {
 	if (!next) {
 		return '';
@@ -492,4 +655,57 @@ function isExistingFile(filePath: string): boolean {
 	} catch {
 		return false;
 	}
+}
+
+function extractToolUseBlocks(
+	streamMessage: AgentSdkStreamMessage
+): Array<{ toolUseId: string; toolName: string; inputSummary: string }> {
+	const content = streamMessage.message?.content;
+	if (!Array.isArray(content)) {
+		return [];
+	}
+	const blocks: Array<{ toolUseId: string; toolName: string; inputSummary: string }> = [];
+	for (const block of content) {
+		if (!block || typeof block !== 'object') {
+			continue;
+		}
+		const b = block as { type?: unknown; id?: unknown; name?: unknown; input?: unknown };
+		if (b.type !== 'tool_use' || typeof b.id !== 'string' || typeof b.name !== 'string') {
+			continue;
+		}
+		blocks.push({ toolUseId: b.id, toolName: b.name, inputSummary: formatToolInput(b.name, b.input) });
+	}
+	return blocks;
+}
+
+function formatToolInput(_name: string, input: unknown): string {
+	if (!input || typeof input !== 'object') {
+		return '';
+	}
+	const inp = input as Record<string, unknown>;
+	const primaryKey = ['command', 'file_path', 'path', 'pattern', 'url', 'query', 'description', 'prompt'].find(
+		(k) => typeof inp[k] === 'string'
+	);
+	if (primaryKey) {
+		const val = inp[primaryKey] as string;
+		return val.length > 60 ? `${val.slice(0, 57)}\u2026` : val;
+	}
+	const json = JSON.stringify(input);
+	return json.length > 60 ? `${json.slice(0, 57)}\u2026` : json;
+}
+
+function formatToolResultContent(content: unknown): string {
+	if (typeof content === 'string') {
+		return content.slice(0, 300);
+	}
+	if (Array.isArray(content)) {
+		return content
+			.filter((b): b is { type: 'text'; text: string } =>
+				b !== null && typeof b === 'object' && (b as { type?: unknown }).type === 'text' && typeof (b as { text?: unknown }).text === 'string'
+			)
+			.map((b) => b.text)
+			.join('\n')
+			.slice(0, 300);
+	}
+	return '';
 }
