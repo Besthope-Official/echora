@@ -129,6 +129,24 @@
           "scope": "window",
           "description": "When enabled, final voice transcription enters a review state in Echora sidebar and only sends after you click Send. When disabled (default), final transcription is sent immediately."
         },
+        "echora.tts.enabled": {
+          "type": "boolean",
+          "default": true,
+          "scope": "window",
+          "description": "Enable text-to-speech playback for assistant final responses in the voice pipeline."
+        },
+        "echora.tts.backend": {
+          "type": "string",
+          "enum": [
+            "local"
+          ],
+          "enumDescriptions": [
+            "Use local @vscode/node-speech models provided by VS Code Speech extension."
+          ],
+          "default": "local",
+          "scope": "window",
+          "description": "Text-to-speech backend for Echora. Additional backends may be added in future versions."
+        },
         "echora.pipeline.systemPrompt": {
           "type": "string",
           "default": "",

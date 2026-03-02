@@ -73,7 +73,7 @@
 			}
 			case 'stateChanged': {
 				updateStateIndicator(msg.state);
-				const isBusy = msg.state === 'thinking' || msg.state === 'transcribing';
+				const isBusy = msg.state === 'thinking' || msg.state === 'transcribing' || msg.state === 'speaking';
 				if (hasPendingDraft) {
 					sendBtn.disabled = isBusy;
 				}

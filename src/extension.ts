@@ -9,6 +9,8 @@ import { loadSystemPrompt } from './core/consumer/promptLoader';
 import type { TextConsumer } from './core/consumer/types';
 import { DictationService } from './core/stt/dictationService';
 import { createNodeSpeechBackend } from './core/stt/nodeSpeechBackend';
+import { createNodeSpeechTtsBackend } from './core/tts/nodeSpeechTtsBackend';
+import type { SpeechSynthesizerBackend } from './core/tts/types';
 import { PipelineStatusBar } from './ui/statusBar';
 import { ChatPanel } from './ui/chatPanel';
 import { MicrophoneSessionCoordinator } from './core/microphoneSessionCoordinator';
@@ -16,6 +18,8 @@ import { disposeSharedOutputChannel, logWithScope } from './utils/outputLogger';
 import { SessionManager } from './core/session/sessionManager';
 import { HistoryStore } from './core/session/historyStore';
 import type { ThinkingStep } from './core/session/historyStore';
+
+type TtsBackend = 'local';
 
 export function activate(context: vscode.ExtensionContext): void {
 	const sessionManager = new SessionManager(context.workspaceState);
@@ -27,7 +31,9 @@ export function activate(context: vscode.ExtensionContext): void {
 	const pipeline = new VoicePipeline(
 		(log) => createNodeSpeechBackend(log),
 		consumer,
-		() => vscode.workspace.getConfiguration('echora').get<boolean>('pipeline.enableTextEditingBeforeSend', false)
+		() => vscode.workspace.getConfiguration('echora').get<boolean>('pipeline.enableTextEditingBeforeSend', false),
+		(log) => createConfiguredTtsBackend(log),
+		() => getTtsConfigKey()
 	);
 
 	if (consumer.onMessage) {
@@ -140,4 +146,35 @@ export function resolveConsumerWorkingDirectory(
 
 	// Fallback: keep SDK in the extension root even when workspace uri is unavailable in UI host.
 	return extensionPath;
+}
+
+async function createConfiguredTtsBackend(
+	log: (message: string) => void
+): Promise<SpeechSynthesizerBackend | undefined> {
+	const ttsEnabled = getTtsEnabled();
+	if (!ttsEnabled) {
+		return undefined;
+	}
+
+	const backend = getTtsBackend();
+	switch (backend) {
+		case 'local':
+			return createNodeSpeechTtsBackend(log);
+		default:
+			log(`Unsupported TTS backend '${backend}'.`);
+			return undefined;
+	}
+}
+
+function getTtsEnabled(): boolean {
+	return vscode.workspace.getConfiguration('echora').get<boolean>('tts.enabled', true);
+}
+
+function getTtsBackend(): TtsBackend {
+	const configured = vscode.workspace.getConfiguration('echora').get<string>('tts.backend', 'local');
+	return configured === 'local' ? configured : 'local';
+}
+
+function getTtsConfigKey(): string {
+	return `${getTtsEnabled() ? 'enabled' : 'disabled'}:${getTtsBackend()}`;
 }

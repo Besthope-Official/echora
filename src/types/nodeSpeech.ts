@@ -9,8 +9,15 @@ export type NodeSpeechTranscriber = {
 	dispose(): void;
 };
 
+export type NodeSpeechSynthesizer = {
+	synthesize(text: string): void;
+	stop(): void;
+	dispose(): void;
+};
+
 export type NodeSpeechModule = {
 	TranscriptionStatusCode: Record<number, string>;
+	SynthesizerStatusCode: Record<number, string>;
 	createTranscriber(
 		options: {
 			modelPath: string;
@@ -21,6 +28,15 @@ export type NodeSpeechModule = {
 		},
 		callback: (error: Error | undefined | null, result: NodeSpeechStatusResult) => void
 	): NodeSpeechTranscriber;
+	createSynthesizer(
+		options: {
+			modelPath: string;
+			modelName: string;
+			modelKey: string;
+			logsPath?: string;
+		},
+		callback: (error: Error | undefined | null, result: NodeSpeechStatusResult) => void
+	): NodeSpeechSynthesizer;
 };
 
 export type NodeSpeechRuntime = {

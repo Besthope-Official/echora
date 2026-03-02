@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import type { TextConsumer } from './consumer/types';
 import type { LogFn, TranscriberBackend, TranscriptionResult } from './stt/types';
+import type { LogFn as TtsLogFn, SpeechSynthesizerBackend } from './tts/types';
 import type { PipelineState, PipelineStateChange } from '../types/pipeline';
 import { formatError } from '../utils/errors';
 import { logWithScope, showSharedOutputChannel } from '../utils/outputLogger';
@@ -20,11 +21,16 @@ export class VoicePipeline implements vscode.Disposable {
 	private processingTask: Promise<void> | undefined;
 	private processingAbortController: AbortController | undefined;
 	private pendingTranscription: string | undefined;
+	private speaker: SpeechSynthesizerBackend | undefined;
+	private speakerInitialization: Promise<SpeechSynthesizerBackend | undefined> | undefined;
+	private speakerConfigKey: string | undefined;
 
 	constructor(
 		private readonly createBackend: (log: LogFn) => Promise<TranscriberBackend>,
 		private readonly textConsumer: TextConsumer,
-		private readonly isTranscriptionEditingEnabled: () => boolean = () => false
+		private readonly isTranscriptionEditingEnabled: () => boolean = () => false,
+		private readonly createSpeaker?: (log: TtsLogFn) => Promise<SpeechSynthesizerBackend | undefined>,
+		private readonly getSpeakerConfigKey: () => string = () => 'default'
 	) {}
 
 	public getState(): PipelineState {
@@ -112,6 +118,7 @@ export class VoicePipeline implements vscode.Disposable {
 	public dispose(): void {
 		this.endSession('Stopped because extension was deactivated.');
 		this.cancelProcessing('Stopped because extension was deactivated.');
+		this.shutdownSpeaker();
 		void this.waitForProcessingToFinish();
 		this._onStateChanged.dispose();
 		this._onPendingTranscriptionChanged.dispose();
@@ -296,10 +303,20 @@ export class VoicePipeline implements vscode.Disposable {
 	private cancelProcessing(reason: string): void {
 		const controller = this.processingAbortController;
 		if (!controller || controller.signal.aborted) {
+			try {
+				this.speaker?.stop();
+			} catch (error) {
+				this.log(`speaker.stop() failed: ${formatError(error)}`);
+			}
 			return;
 		}
 		this.log(`Cancelling consumer processing (${reason}).`);
 		controller.abort();
+		try {
+			this.speaker?.stop();
+		} catch (error) {
+			this.log(`speaker.stop() failed: ${formatError(error)}`);
+		}
 	}
 
 	private async waitForProcessingToFinish(): Promise<void> {
@@ -335,17 +352,43 @@ export class VoicePipeline implements vscode.Disposable {
 	private async consumeText(sessionId: number, text: string, reason: string, signal: AbortSignal): Promise<void> {
 		try {
 			this.transitionTo('thinking', reason);
-			await this.textConsumer.consume(
-				{
-					text,
-					source: 'voice',
-					createdAt: Date.now(),
-				},
-				{ signal }
-			);
+			let assistantText: string = "";
+			const captureDisposable = this.textConsumer.onMessage?.((message) => {
+				if (message.type === 'assistantDone') {
+					assistantText = message.text;
+				}
+			});
+			try {
+				await this.textConsumer.consume(
+					{
+						text,
+						source: 'voice',
+						createdAt: Date.now(),
+					},
+					{ signal }
+				);
+			} finally {
+				captureDisposable?.dispose();
+			}
 			if (!this.isCurrentSession(sessionId)) {
 				return;
 			}
+
+			const contentToSpeak = assistantText?.trim();
+			if (contentToSpeak) {
+				const speaker = await this.ensureSpeaker();
+				if (!this.isCurrentSession(sessionId)) {
+					return;
+				}
+				if (speaker) {
+					this.transitionTo('speaking', 'Speaking assistant response');
+					await speaker.speak(contentToSpeak, signal);
+					if (!this.isCurrentSession(sessionId)) {
+						return;
+					}
+				}
+			}
+
 			this.endSession('Consumer finished processing the message.');
 		} catch (error) {
 			if (isAbortError(error)) {
@@ -368,6 +411,60 @@ export class VoicePipeline implements vscode.Disposable {
 		}
 		this.pendingTranscription = text;
 		this._onPendingTranscriptionChanged.fire(text);
+	}
+
+	private async ensureSpeaker(): Promise<SpeechSynthesizerBackend | undefined> {
+		if (!this.createSpeaker) {
+			return undefined;
+		}
+		const configKey = this.getSpeakerConfigKey();
+		if (this.speaker && this.speakerConfigKey === configKey) {
+			return this.speaker;
+		}
+		if (this.speaker && this.speakerConfigKey !== configKey) {
+			this.shutdownSpeaker();
+		}
+		if (this.speakerInitialization) {
+			await this.speakerInitialization;
+			if (this.speaker && this.speakerConfigKey === configKey) {
+				return this.speaker;
+			}
+			if (this.speaker && this.speakerConfigKey !== configKey) {
+				this.shutdownSpeaker();
+			}
+		}
+		if (!this.speakerInitialization) {
+			this.speakerInitialization = this.createSpeaker((message) => {
+				this.log(message);
+			})
+				.then((speaker) => {
+					this.speaker = speaker;
+					this.speakerConfigKey = speaker ? configKey : undefined;
+					return speaker;
+				})
+				.catch((error) => {
+					this.log(`TTS initialization failed: ${formatError(error)}`);
+					return undefined;
+				})
+				.finally(() => {
+					this.speakerInitialization = undefined;
+				});
+		}
+		return this.speakerInitialization;
+	}
+
+	private shutdownSpeaker(): void {
+		const speaker = this.speaker;
+		this.speaker = undefined;
+		this.speakerConfigKey = undefined;
+		if (!speaker) {
+			return;
+		}
+		try {
+			speaker.dispose();
+		} catch (error) {
+			this.log(`speaker.dispose() failed: ${formatError(error)}`);
+		}
 	}
 }
 
