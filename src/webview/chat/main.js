@@ -16,6 +16,7 @@
 	let thinkingStateStartTime = null;
 	let thinkingStateTimerInterval = null;
 	let hasPendingDraft = false;
+	let pendingContextHint = null;
 
 	sendBtn.addEventListener('click', sendPendingTranscription);
 	draftInput.addEventListener('keydown', (event) => {
@@ -31,10 +32,22 @@
 			case 'userMessage': {
 				finishAssistant();
 				thinkingStartTime = Date.now();
-				const el = document.createElement('div');
-				el.className = 'msg user';
-				el.textContent = msg.text;
-				container.appendChild(el);
+				const msgEl = document.createElement('div');
+				msgEl.className = 'msg user';
+				msgEl.textContent = msg.text;
+				if (pendingContextHint) {
+					const turn = document.createElement('div');
+					turn.className = 'user-turn';
+					turn.appendChild(msgEl);
+					const footnote = document.createElement('div');
+					footnote.className = 'msg-context-footnote';
+					footnote.textContent = pendingContextHint;
+					turn.appendChild(footnote);
+					container.appendChild(turn);
+					pendingContextHint = null;
+				} else {
+					container.appendChild(msgEl);
+				}
 				scrollToBottom();
 				break;
 			}
@@ -97,6 +110,14 @@
 				draftWrap.style.display = 'none';
 				break;
 			}
+			case 'editorContextHint': {
+				pendingContextHint = msg.text;
+				break;
+			}
+			case 'editorContextHintCleared': {
+				pendingContextHint = null;
+				break;
+			}
 			case 'loadHistory': {
 				for (const entry of msg.entries) {
 					if (entry.role === 'assistant' && entry.thinkingSteps && entry.thinkingSteps.length > 0) {
@@ -111,7 +132,18 @@
 						el.className = 'msg user';
 						el.textContent = entry.content;
 					}
-					container.appendChild(el);
+					if (entry.role === 'user' && entry.editorContextHint) {
+						const turn = document.createElement('div');
+						turn.className = 'user-turn';
+						turn.appendChild(el);
+						const footnote = document.createElement('div');
+						footnote.className = 'msg-context-footnote';
+						footnote.textContent = entry.editorContextHint;
+						turn.appendChild(footnote);
+						container.appendChild(turn);
+					} else {
+						container.appendChild(el);
+					}
 				}
 				scrollToBottom();
 				break;

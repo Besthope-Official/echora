@@ -1,6 +1,7 @@
 ﻿import * as vscode from 'vscode';
 import * as fs from 'fs';
 import type { VoicePipeline } from '../core/pipeline';
+import type { PipelineEditorContext } from '../types/pipeline';
 import type { TextConsumer, ConsumerMessage } from '../core/consumer/types';
 import type { HistoryEntry } from '../core/session/historyStore';
 
@@ -13,6 +14,8 @@ type HostToWebviewMessage =
 	| { type: 'stateChanged'; state: string }
 	| { type: 'pendingTranscription'; text: string }
 	| { type: 'pendingCleared' }
+	| { type: 'editorContextHint'; text: string }
+	| { type: 'editorContextHintCleared' }
 	| { type: 'loadHistory'; entries: HistoryEntry[] }
 	| { type: 'toolUse'; toolUseId: string; toolName: string; inputSummary: string }
 	| { type: 'toolProgress'; toolUseId: string; toolName: string; elapsedSeconds: number }
@@ -54,6 +57,9 @@ export class ChatPanel implements vscode.WebviewViewProvider, vscode.Disposable 
 					return;
 				}
 				this.postMessage({ type: 'pendingCleared' });
+			}),
+			this.pipeline.onEditorContextCaptured((context) => {
+				this.postEditorContextHint(context);
 			}),
 		);
 	}
@@ -136,6 +142,7 @@ export class ChatPanel implements vscode.WebviewViewProvider, vscode.Disposable 
 			if (typeof pending === 'string') {
 				this.postMessage({ type: 'pendingTranscription', text: pending });
 			}
+			this.postEditorContextHint(this.pipeline.getLastCapturedEditorContext());
 			if (this.readHistory) {
 				try {
 					const entries = await this.readHistory();
@@ -163,6 +170,22 @@ export class ChatPanel implements vscode.WebviewViewProvider, vscode.Disposable 
 			const description = error instanceof Error ? error.message : String(error);
 			this.postMessage({ type: 'error', message: `Failed to send transcription: ${description}` });
 		}
+	}
+
+	private postEditorContextHint(context: PipelineEditorContext | undefined): void {
+		if (!context) {
+			this.postMessage({ type: 'editorContextHintCleared' });
+			return;
+		}
+		const startLine = context.selection.startLine + 1;
+		const startCharacter = context.selection.startCharacter + 1;
+		const endLine = context.selection.endLine + 1;
+		const endCharacter = context.selection.endCharacter + 1;
+		const rangeText = context.selection.isEmpty
+			? `${startLine}:${startCharacter}`
+			: `${startLine}:${startCharacter}-${endLine}:${endCharacter}`;
+		const hint = `${context.filePath} @ ${rangeText}`;
+		this.postMessage({ type: 'editorContextHint', text: hint });
 	}
 
 	private postMessage(message: HostToWebviewMessage): void {

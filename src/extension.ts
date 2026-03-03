@@ -7,6 +7,7 @@ import { AgentSdkTextConsumer } from './core/consumer/agentSdkTextConsumer';
 import { resolveRemoteContext, createRemoteSpawner, resolveRemoteWorkingDirectory } from './core/consumer/remoteBridge';
 import { loadSystemPrompt } from './core/consumer/promptLoader';
 import type { TextConsumer } from './core/consumer/types';
+import type { PipelineEditorContext } from './types/pipeline';
 import { DictationService } from './core/stt/dictationService';
 import { createNodeSpeechBackend } from './core/stt/nodeSpeechBackend';
 import { createNodeSpeechTtsBackend } from './core/tts/nodeSpeechTtsBackend';
@@ -41,6 +42,7 @@ export function activate(context: vscode.ExtensionContext): void {
 		type PendingStep = PendingToolStep | { type: 'task'; description: string };
 
 		let pendingUserText = '';
+		let pendingEditorContextHint: string | undefined;
 		let turnStartMs: number | undefined;
 		const pendingSteps: PendingStep[] = [];
 		const pendingStepById = new Map<string, PendingToolStep>();
@@ -49,6 +51,7 @@ export function activate(context: vscode.ExtensionContext): void {
 			consumer.onMessage((msg) => {
 				if (msg.type === 'userMessage') {
 					pendingUserText = msg.text;
+					pendingEditorContextHint = formatEditorContextHint(pipeline.getLastCapturedEditorContext());
 					pendingSteps.length = 0;
 					pendingStepById.clear();
 					turnStartMs = Date.now();
@@ -69,11 +72,13 @@ export function activate(context: vscode.ExtensionContext): void {
 					const capturedSteps: ThinkingStep[] | undefined = pendingSteps.length > 0 ? [...pendingSteps] : undefined;
 					const sessionId = sessionManager.getSessionId() ?? '';
 					const userText = pendingUserText;
+					const editorContextHint = pendingEditorContextHint;
 					pendingUserText = '';
+					pendingEditorContextHint = undefined;
 					pendingSteps.length = 0;
 					pendingStepById.clear();
 					turnStartMs = undefined;
-					void historyStore.append({ timestamp: new Date().toISOString(), role: 'user', content: userText, sessionId })
+					void historyStore.append({ timestamp: new Date().toISOString(), role: 'user', content: userText, sessionId, editorContextHint })
 						.then(() => historyStore.append({ timestamp: new Date().toISOString(), role: 'assistant', content: msg.text, sessionId, thinkingSteps: capturedSteps, thinkingDurationSeconds }));
 				}
 			})
@@ -177,4 +182,15 @@ function getTtsBackend(): TtsBackend {
 
 function getTtsConfigKey(): string {
 	return `${getTtsEnabled() ? 'enabled' : 'disabled'}:${getTtsBackend()}`;
+}
+
+function formatEditorContextHint(context: PipelineEditorContext | undefined): string | undefined {
+	if (!context) {
+		return undefined;
+	}
+	const s = context.selection;
+	const rangeText = s.isEmpty
+		? `${s.startLine + 1}:${s.startCharacter + 1}`
+		: `${s.startLine + 1}:${s.startCharacter + 1}-${s.endLine + 1}:${s.endCharacter + 1}`;
+	return `${context.filePath} @ ${rangeText}`;
 }

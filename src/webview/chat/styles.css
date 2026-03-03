@@ -36,6 +36,26 @@ body {
 	margin-top: 10px;
 }
 
+.user-turn {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-end;
+	align-self: flex-end;
+	max-width: 100%;
+}
+
+.msg-context-footnote {
+	font-size: 0.78em;
+	font-family: var(--vscode-editor-font-family, monospace);
+	color: var(--vscode-descriptionForeground);
+	opacity: 0.65;
+	padding: 2px 4px 0;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	max-width: 100%;
+}
+
 .msg {
 	padding: 8px 12px;
 	border-radius: 6px;

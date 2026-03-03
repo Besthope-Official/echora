@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import type { PipelineEditorContext } from '../../types/pipeline';
 
 export const DEFAULT_ECHORA_SYSTEM_PROMPT = `You are responding to voice input via Echora. The user is coding hands-free.
 
@@ -55,6 +56,33 @@ export function loadSystemPrompt(workspaceRoot: string | undefined): string {
 
 export function buildPromptWithSystem(systemPrompt: string, userText: string): string {
 	return `<echora_instructions>\n${systemPrompt}\n</echora_instructions>\n\n${userText}`;
+}
+
+export function buildUserPromptWithEditorContext(
+	userText: string,
+	context: PipelineEditorContext | undefined
+): string {
+	if (!context) {
+		return userText;
+	}
+
+	const selection = `${context.selection.startLine + 1}:${context.selection.startCharacter + 1}-${
+		context.selection.endLine + 1
+	}:${context.selection.endCharacter + 1}`;
+	const selectedText = context.selectedText.length > 0 ? context.selectedText : '[empty selection]';
+
+	return [
+		'<editor_context>',
+		`file_path: ${context.filePath}`,
+		`language_id: ${context.languageId}`,
+		`selection: ${selection}`,
+		`selection_is_empty: ${context.selection.isEmpty}`,
+		'selected_text:',
+		selectedText,
+		'</editor_context>',
+		'',
+		userText,
+	].join('\n');
 }
 
 function tryReadFile(filePath: string): string | undefined {

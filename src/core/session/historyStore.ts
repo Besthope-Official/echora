@@ -18,6 +18,7 @@ export interface HistoryEntry {
 	sessionId: string;
 	thinkingSteps?: ThinkingStep[];
 	thinkingDurationSeconds?: number;
+	editorContextHint?: string;
 }
 
 export class HistoryStore {
