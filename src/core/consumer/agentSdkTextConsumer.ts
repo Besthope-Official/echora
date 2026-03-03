@@ -8,7 +8,7 @@ import type { PipelineTextMessage } from '../../types/pipeline';
 import { formatError } from '../../utils/errors';
 import { logWithScope } from '../../utils/outputLogger';
 import type { ConsumerMessage, TextConsumer, TextConsumerOptions } from './types';
-import { buildPromptWithSystem } from './promptLoader';
+import { buildPromptWithSystem, buildUserPromptWithEditorContext } from './promptLoader';
 
 type AgentSdkQueryOptions = {
 	cwd?: string;
@@ -120,10 +120,11 @@ export class AgentSdkTextConsumer implements TextConsumer, vscode.Disposable {
 				}
 			}
 		};
+		const editorContextHint = buildEditorContextHint(message.context);
 
 		this.log(`received from ${message.source}: ${message.text}`);
 		this.log(`dispatching to Agent SDK. cwd=${cwd}`);
-		this._onMessage.fire({ type: 'userMessage', text: message.text });
+		this._onMessage.fire({ type: 'userMessage', text: message.text, editorContextHint });
 		this.log(`ANTHROPIC_BASE_URL=${process.env.ANTHROPIC_BASE_URL ?? '(not set)'}`);
 		this.log(`ANTHROPIC_API_KEY=${process.env.ANTHROPIC_API_KEY ? '***set***' : '(not set)'}`);
 		if (sdkCliPath) {
@@ -140,9 +141,17 @@ export class AgentSdkTextConsumer implements TextConsumer, vscode.Disposable {
 		const spawner = this.spawnClaudeCodeProcess;
 		const resumeSessionId = options?.resumeSessionId ?? this.getResumeSessionId();
 		const shouldInjectSystemPrompt = !resumeSessionId;
+		const userPrompt = buildUserPromptWithEditorContext(message.text, message.context);
 		const finalPrompt = shouldInjectSystemPrompt
-			? buildPromptWithSystem(this.getSystemPrompt(), message.text)
-			: message.text;
+			? buildPromptWithSystem(this.getSystemPrompt(), userPrompt)
+			: userPrompt;
+		if (message.context) {
+			this.log(
+				`editor_context attached: ${message.context.filePath} ${formatSelectionRange(
+					message.context
+				)}, selectedChars=${message.context.selectedText.length}.`
+			);
+		}
 		this.log(
 			shouldInjectSystemPrompt
 				? 'injecting Echora system prompt for a new Claude session.'
@@ -643,6 +652,23 @@ function formatStderrSuffix(stderrLines: string[]): string {
 		return '';
 	}
 	return ` (last stderr: ${stderrLines[stderrLines.length - 1]})`;
+}
+
+function formatSelectionRange(context: NonNullable<PipelineTextMessage['context']>): string {
+	return `${context.selection.startLine + 1}:${context.selection.startCharacter + 1}-${
+		context.selection.endLine + 1
+	}:${context.selection.endCharacter + 1}`;
+}
+
+function buildEditorContextHint(context: PipelineTextMessage['context']): string | undefined {
+	if (!context) {
+		return undefined;
+	}
+	const s = context.selection;
+	const range = s.isEmpty
+		? `${s.startLine + 1}:${s.startCharacter + 1}`
+		: `${s.startLine + 1}:${s.startCharacter + 1}-${s.endLine + 1}:${s.endCharacter + 1}`;
+	return `${context.filePath} @ ${range}`;
 }
 
 function buildAgentEnvironment(): Record<string, string | undefined> {

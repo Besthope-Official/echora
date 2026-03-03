@@ -31,10 +31,21 @@
 			case 'userMessage': {
 				finishAssistant();
 				thinkingStartTime = Date.now();
-				const el = document.createElement('div');
-				el.className = 'msg user';
-				el.textContent = msg.text;
-				container.appendChild(el);
+				const msgEl = document.createElement('div');
+				msgEl.className = 'msg user';
+				msgEl.textContent = msg.text;
+				if (msg.editorContextHint) {
+					const turn = document.createElement('div');
+					turn.className = 'user-turn';
+					turn.appendChild(msgEl);
+					const footnote = document.createElement('div');
+					footnote.className = 'msg-context-footnote';
+					footnote.textContent = msg.editorContextHint;
+					turn.appendChild(footnote);
+					container.appendChild(turn);
+				} else {
+					container.appendChild(msgEl);
+				}
 				scrollToBottom();
 				break;
 			}
@@ -111,7 +122,18 @@
 						el.className = 'msg user';
 						el.textContent = entry.content;
 					}
-					container.appendChild(el);
+					if (entry.role === 'user' && entry.editorContextHint) {
+						const turn = document.createElement('div');
+						turn.className = 'user-turn';
+						turn.appendChild(el);
+						const footnote = document.createElement('div');
+						footnote.className = 'msg-context-footnote';
+						footnote.textContent = entry.editorContextHint;
+						turn.appendChild(footnote);
+						container.appendChild(turn);
+					} else {
+						container.appendChild(el);
+					}
 				}
 				scrollToBottom();
 				break;

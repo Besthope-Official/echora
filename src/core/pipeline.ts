@@ -2,9 +2,11 @@ import * as vscode from 'vscode';
 import type { TextConsumer } from './consumer/types';
 import type { LogFn, TranscriberBackend, TranscriptionResult } from './stt/types';
 import type { LogFn as TtsLogFn, SpeechSynthesizerBackend } from './tts/types';
-import type { PipelineState, PipelineStateChange } from '../types/pipeline';
+import type { PipelineEditorContext, PipelineState, PipelineStateChange } from '../types/pipeline';
 import { formatError } from '../utils/errors';
 import { logWithScope, showSharedOutputChannel } from '../utils/outputLogger';
+
+const MAX_EDITOR_SELECTION_CHARS = 8000;
 
 // Single-utterance pipeline: one final STT result -> one consumer dispatch -> return to idle.
 export class VoicePipeline implements vscode.Disposable {
@@ -12,6 +14,8 @@ export class VoicePipeline implements vscode.Disposable {
 	public readonly onStateChanged = this._onStateChanged.event;
 	private readonly _onPendingTranscriptionChanged = new vscode.EventEmitter<string | undefined>();
 	public readonly onPendingTranscriptionChanged = this._onPendingTranscriptionChanged.event;
+	private readonly _onEditorContextCaptured = new vscode.EventEmitter<PipelineEditorContext | undefined>();
+	public readonly onEditorContextCaptured = this._onEditorContextCaptured.event;
 
 	private backend: TranscriberBackend | undefined;
 	private backendListeners: vscode.Disposable[] = [];
@@ -21,6 +25,7 @@ export class VoicePipeline implements vscode.Disposable {
 	private processingTask: Promise<void> | undefined;
 	private processingAbortController: AbortController | undefined;
 	private pendingTranscription: string | undefined;
+	private lastCapturedEditorContext: PipelineEditorContext | undefined;
 	private speaker: SpeechSynthesizerBackend | undefined;
 	private speakerInitialization: Promise<SpeechSynthesizerBackend | undefined> | undefined;
 	private speakerConfigKey: string | undefined;
@@ -39,6 +44,10 @@ export class VoicePipeline implements vscode.Disposable {
 
 	public getPendingTranscription(): string | undefined {
 		return this.pendingTranscription;
+	}
+
+	public getLastCapturedEditorContext(): PipelineEditorContext | undefined {
+		return this.lastCapturedEditorContext;
 	}
 
 	public async startListening(): Promise<void> {
@@ -122,6 +131,7 @@ export class VoicePipeline implements vscode.Disposable {
 		void this.waitForProcessingToFinish();
 		this._onStateChanged.dispose();
 		this._onPendingTranscriptionChanged.dispose();
+		this._onEditorContextCaptured.dispose();
 		this.textConsumer.dispose();
 	}
 
@@ -352,6 +362,8 @@ export class VoicePipeline implements vscode.Disposable {
 	private async consumeText(sessionId: number, text: string, reason: string, signal: AbortSignal): Promise<void> {
 		try {
 			this.transitionTo('thinking', reason);
+			const editorContext = this.captureActiveEditorContext();
+			this.setCapturedEditorContext(editorContext);
 			let assistantText: string = "";
 			const captureDisposable = this.textConsumer.onMessage?.((message) => {
 				if (message.type === 'assistantDone') {
@@ -364,6 +376,7 @@ export class VoicePipeline implements vscode.Disposable {
 						text,
 						source: 'voice',
 						createdAt: Date.now(),
+						context: editorContext,
 					},
 					{ signal }
 				);
@@ -411,6 +424,54 @@ export class VoicePipeline implements vscode.Disposable {
 		}
 		this.pendingTranscription = text;
 		this._onPendingTranscriptionChanged.fire(text);
+	}
+
+	private setCapturedEditorContext(context: PipelineEditorContext | undefined): void {
+		this.lastCapturedEditorContext = context;
+		this._onEditorContextCaptured.fire(context);
+	}
+
+	private captureActiveEditorContext(): PipelineEditorContext | undefined {
+		const editor = vscode.window.activeTextEditor;
+		if (!editor) {
+			this.log('No active editor found; skipping editor context capture.');
+			return undefined;
+		}
+
+		const { document, selection } = editor;
+		let selectedText = document.getText(selection);
+		if (selectedText.length > MAX_EDITOR_SELECTION_CHARS) {
+			selectedText = selectedText.slice(0, MAX_EDITOR_SELECTION_CHARS);
+			this.log(
+				`Editor selection exceeded ${MAX_EDITOR_SELECTION_CHARS} chars and was truncated before prompt injection.`
+			);
+		}
+
+		const filePath =
+			document.uri.scheme === 'file'
+				? vscode.workspace.asRelativePath(document.uri, false)
+				: document.uri.toString();
+
+		const context: PipelineEditorContext = {
+			filePath,
+			languageId: document.languageId,
+			selection: {
+				startLine: selection.start.line,
+				startCharacter: selection.start.character,
+				endLine: selection.end.line,
+				endCharacter: selection.end.character,
+				isEmpty: selection.isEmpty,
+			},
+			selectedText,
+		};
+
+		this.log(
+			`Captured editor context: ${context.filePath}:${context.selection.startLine + 1}:${
+				context.selection.startCharacter + 1
+			}-${context.selection.endLine + 1}:${context.selection.endCharacter + 1}, selectedChars=${selectedText.length}.`
+		);
+
+		return context;
 	}
 
 	private async ensureSpeaker(): Promise<SpeechSynthesizerBackend | undefined> {

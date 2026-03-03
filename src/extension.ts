@@ -41,6 +41,7 @@ export function activate(context: vscode.ExtensionContext): void {
 		type PendingStep = PendingToolStep | { type: 'task'; description: string };
 
 		let pendingUserText = '';
+		let pendingEditorContextHint: string | undefined;
 		let turnStartMs: number | undefined;
 		const pendingSteps: PendingStep[] = [];
 		const pendingStepById = new Map<string, PendingToolStep>();
@@ -49,6 +50,7 @@ export function activate(context: vscode.ExtensionContext): void {
 			consumer.onMessage((msg) => {
 				if (msg.type === 'userMessage') {
 					pendingUserText = msg.text;
+					pendingEditorContextHint = msg.editorContextHint;
 					pendingSteps.length = 0;
 					pendingStepById.clear();
 					turnStartMs = Date.now();
@@ -69,11 +71,13 @@ export function activate(context: vscode.ExtensionContext): void {
 					const capturedSteps: ThinkingStep[] | undefined = pendingSteps.length > 0 ? [...pendingSteps] : undefined;
 					const sessionId = sessionManager.getSessionId() ?? '';
 					const userText = pendingUserText;
+					const editorContextHint = pendingEditorContextHint;
 					pendingUserText = '';
+					pendingEditorContextHint = undefined;
 					pendingSteps.length = 0;
 					pendingStepById.clear();
 					turnStartMs = undefined;
-					void historyStore.append({ timestamp: new Date().toISOString(), role: 'user', content: userText, sessionId })
+					void historyStore.append({ timestamp: new Date().toISOString(), role: 'user', content: userText, sessionId, editorContextHint })
 						.then(() => historyStore.append({ timestamp: new Date().toISOString(), role: 'assistant', content: msg.text, sessionId, thinkingSteps: capturedSteps, thinkingDurationSeconds }));
 				}
 			})
@@ -97,7 +101,11 @@ export function activate(context: vscode.ExtensionContext): void {
 		dictationCommands,
 		pipelineCommands,
 		statusBar,
-		vscode.window.registerWebviewViewProvider('echora.chatPanel', chatPanel),
+		vscode.window.registerWebviewViewProvider('echora.chatPanel', chatPanel, {
+			webviewOptions: {
+				retainContextWhenHidden: true,
+			},
+		}),
 		chatPanel
 	);
 }
