@@ -16,7 +16,6 @@
 	let thinkingStateStartTime = null;
 	let thinkingStateTimerInterval = null;
 	let hasPendingDraft = false;
-	let pendingContextHint = null;
 
 	sendBtn.addEventListener('click', sendPendingTranscription);
 	draftInput.addEventListener('keydown', (event) => {
@@ -35,16 +34,15 @@
 				const msgEl = document.createElement('div');
 				msgEl.className = 'msg user';
 				msgEl.textContent = msg.text;
-				if (pendingContextHint) {
+				if (msg.editorContextHint) {
 					const turn = document.createElement('div');
 					turn.className = 'user-turn';
 					turn.appendChild(msgEl);
 					const footnote = document.createElement('div');
 					footnote.className = 'msg-context-footnote';
-					footnote.textContent = pendingContextHint;
+					footnote.textContent = msg.editorContextHint;
 					turn.appendChild(footnote);
 					container.appendChild(turn);
-					pendingContextHint = null;
 				} else {
 					container.appendChild(msgEl);
 				}
@@ -108,14 +106,6 @@
 				draftInput.value = '';
 				sendBtn.disabled = false;
 				draftWrap.style.display = 'none';
-				break;
-			}
-			case 'editorContextHint': {
-				pendingContextHint = msg.text;
-				break;
-			}
-			case 'editorContextHintCleared': {
-				pendingContextHint = null;
 				break;
 			}
 			case 'loadHistory': {

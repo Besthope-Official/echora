@@ -16,7 +16,11 @@ export class MockTextConsumer implements TextConsumer, vscode.Disposable {
 		options?: TextConsumerOptions
 	): Promise<void> {
 		this.log(`received from ${message.source}: ${message.text}`);
-		this._onMessage.fire({ type: 'userMessage', text: message.text });
+		this._onMessage.fire({
+			type: 'userMessage',
+			text: message.text,
+			editorContextHint: formatEditorContextHint(message.context),
+		});
 
 		if (this.processingDelayMs > 0) {
 			await this.delay(this.processingDelayMs, options?.signal);
@@ -62,4 +66,15 @@ function createAbortError(): Error {
 	const error = new Error('Processing aborted.');
 	error.name = 'AbortError';
 	return error;
+}
+
+function formatEditorContextHint(context: PipelineTextMessage['context']): string | undefined {
+	if (!context) {
+		return undefined;
+	}
+	const s = context.selection;
+	const range = s.isEmpty
+		? `${s.startLine + 1}:${s.startCharacter + 1}`
+		: `${s.startLine + 1}:${s.startCharacter + 1}-${s.endLine + 1}:${s.endCharacter + 1}`;
+	return `${context.filePath} @ ${range}`;
 }

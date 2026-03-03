@@ -7,7 +7,6 @@ import { AgentSdkTextConsumer } from './core/consumer/agentSdkTextConsumer';
 import { resolveRemoteContext, createRemoteSpawner, resolveRemoteWorkingDirectory } from './core/consumer/remoteBridge';
 import { loadSystemPrompt } from './core/consumer/promptLoader';
 import type { TextConsumer } from './core/consumer/types';
-import type { PipelineEditorContext } from './types/pipeline';
 import { DictationService } from './core/stt/dictationService';
 import { createNodeSpeechBackend } from './core/stt/nodeSpeechBackend';
 import { createNodeSpeechTtsBackend } from './core/tts/nodeSpeechTtsBackend';
@@ -51,7 +50,7 @@ export function activate(context: vscode.ExtensionContext): void {
 			consumer.onMessage((msg) => {
 				if (msg.type === 'userMessage') {
 					pendingUserText = msg.text;
-					pendingEditorContextHint = formatEditorContextHint(pipeline.getLastCapturedEditorContext());
+					pendingEditorContextHint = msg.editorContextHint;
 					pendingSteps.length = 0;
 					pendingStepById.clear();
 					turnStartMs = Date.now();
@@ -102,7 +101,11 @@ export function activate(context: vscode.ExtensionContext): void {
 		dictationCommands,
 		pipelineCommands,
 		statusBar,
-		vscode.window.registerWebviewViewProvider('echora.chatPanel', chatPanel),
+		vscode.window.registerWebviewViewProvider('echora.chatPanel', chatPanel, {
+			webviewOptions: {
+				retainContextWhenHidden: true,
+			},
+		}),
 		chatPanel
 	);
 }
@@ -182,15 +185,4 @@ function getTtsBackend(): TtsBackend {
 
 function getTtsConfigKey(): string {
 	return `${getTtsEnabled() ? 'enabled' : 'disabled'}:${getTtsBackend()}`;
-}
-
-function formatEditorContextHint(context: PipelineEditorContext | undefined): string | undefined {
-	if (!context) {
-		return undefined;
-	}
-	const s = context.selection;
-	const rangeText = s.isEmpty
-		? `${s.startLine + 1}:${s.startCharacter + 1}`
-		: `${s.startLine + 1}:${s.startCharacter + 1}-${s.endLine + 1}:${s.endCharacter + 1}`;
-	return `${context.filePath} @ ${rangeText}`;
 }

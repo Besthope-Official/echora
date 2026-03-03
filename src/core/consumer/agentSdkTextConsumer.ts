@@ -120,10 +120,11 @@ export class AgentSdkTextConsumer implements TextConsumer, vscode.Disposable {
 				}
 			}
 		};
+		const editorContextHint = buildEditorContextHint(message.context);
 
 		this.log(`received from ${message.source}: ${message.text}`);
 		this.log(`dispatching to Agent SDK. cwd=${cwd}`);
-		this._onMessage.fire({ type: 'userMessage', text: message.text });
+		this._onMessage.fire({ type: 'userMessage', text: message.text, editorContextHint });
 		this.log(`ANTHROPIC_BASE_URL=${process.env.ANTHROPIC_BASE_URL ?? '(not set)'}`);
 		this.log(`ANTHROPIC_API_KEY=${process.env.ANTHROPIC_API_KEY ? '***set***' : '(not set)'}`);
 		if (sdkCliPath) {
@@ -657,6 +658,17 @@ function formatSelectionRange(context: NonNullable<PipelineTextMessage['context'
 	return `${context.selection.startLine + 1}:${context.selection.startCharacter + 1}-${
 		context.selection.endLine + 1
 	}:${context.selection.endCharacter + 1}`;
+}
+
+function buildEditorContextHint(context: PipelineTextMessage['context']): string | undefined {
+	if (!context) {
+		return undefined;
+	}
+	const s = context.selection;
+	const range = s.isEmpty
+		? `${s.startLine + 1}:${s.startCharacter + 1}`
+		: `${s.startLine + 1}:${s.startCharacter + 1}-${s.endLine + 1}:${s.endCharacter + 1}`;
+	return `${context.filePath} @ ${range}`;
 }
 
 function buildAgentEnvironment(): Record<string, string | undefined> {

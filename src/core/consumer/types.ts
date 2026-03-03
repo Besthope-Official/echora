@@ -7,7 +7,7 @@ export type TextConsumerOptions = {
 };
 
 export type ConsumerMessage =
-	| { type: 'userMessage'; text: string }
+	| { type: 'userMessage'; text: string; editorContextHint?: string }
 	| { type: 'assistantThinkingDelta'; text: string }
 	| { type: 'assistantDelta'; text: string }
 	| { type: 'assistantDone'; text: string }

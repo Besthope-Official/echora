@@ -1,12 +1,11 @@
 ﻿import * as vscode from 'vscode';
 import * as fs from 'fs';
 import type { VoicePipeline } from '../core/pipeline';
-import type { PipelineEditorContext } from '../types/pipeline';
 import type { TextConsumer, ConsumerMessage } from '../core/consumer/types';
 import type { HistoryEntry } from '../core/session/historyStore';
 
 type HostToWebviewMessage =
-	| { type: 'userMessage'; text: string }
+	| { type: 'userMessage'; text: string; editorContextHint?: string }
 	| { type: 'assistantThinkingDelta'; text: string }
 	| { type: 'assistantDelta'; text: string }
 	| { type: 'assistantDone' }
@@ -14,8 +13,6 @@ type HostToWebviewMessage =
 	| { type: 'stateChanged'; state: string }
 	| { type: 'pendingTranscription'; text: string }
 	| { type: 'pendingCleared' }
-	| { type: 'editorContextHint'; text: string }
-	| { type: 'editorContextHintCleared' }
 	| { type: 'loadHistory'; entries: HistoryEntry[] }
 	| { type: 'toolUse'; toolUseId: string; toolName: string; inputSummary: string }
 	| { type: 'toolProgress'; toolUseId: string; toolName: string; elapsedSeconds: number }
@@ -49,23 +46,26 @@ export class ChatPanel implements vscode.WebviewViewProvider, vscode.Disposable 
 
 		this.disposables.push(
 			this.pipeline.onStateChanged((change) => {
-				this.postMessage({ type: 'stateChanged', state: change.current });
+				if (this.canDeliverMessages()) {
+					this.postMessage({ type: 'stateChanged', state: change.current });
+				}
 			}),
 			this.pipeline.onPendingTranscriptionChanged((text) => {
+				if (!this.canDeliverMessages()) {
+					return;
+				}
 				if (typeof text === 'string') {
 					this.postMessage({ type: 'pendingTranscription', text });
 					return;
 				}
 				this.postMessage({ type: 'pendingCleared' });
 			}),
-			this.pipeline.onEditorContextCaptured((context) => {
-				this.postEditorContextHint(context);
-			}),
 		);
 	}
 
 	public resolveWebviewView(webviewView: vscode.WebviewView): void {
 		this.view = webviewView;
+		this.isWebviewReady = false;
 		const webviewRoot = this.getWebviewRoot();
 		webviewView.webview.options = {
 			enableScripts: true,
@@ -75,7 +75,20 @@ export class ChatPanel implements vscode.WebviewViewProvider, vscode.Disposable 
 		this.disposables.push(
 			webviewView.webview.onDidReceiveMessage((message: WebviewToHostMessage) => {
 				void this.handleWebviewMessage(message);
-			})
+			}),
+			webviewView.onDidDispose(() => {
+				if (this.view === webviewView) {
+					this.view = undefined;
+					this.isWebviewReady = false;
+				}
+			}),
+			webviewView.onDidChangeVisibility(() => {
+				if (!webviewView.visible || !this.canDeliverMessages()) {
+					return;
+				}
+				this.postPipelineSnapshot();
+				this.flushQueuedMessages();
+			}),
 		);
 		// Initial state and history are sent in response to 'webviewReady' from the webview,
 		// ensuring the JS listener is registered before messages arrive.
@@ -88,7 +101,7 @@ export class ChatPanel implements vscode.WebviewViewProvider, vscode.Disposable 
 	}
 
 	private handleConsumerMessage(msg: ConsumerMessage): void {
-		if (!this.isWebviewReady) {
+		if (!this.canDeliverMessages()) {
 			this.messageQueue.push(msg);
 			return;
 		}
@@ -98,7 +111,7 @@ export class ChatPanel implements vscode.WebviewViewProvider, vscode.Disposable 
 	private dispatchConsumerMessage(msg: ConsumerMessage): void {
 		switch (msg.type) {
 			case 'userMessage':
-				this.postMessage({ type: 'userMessage', text: msg.text });
+				this.postMessage({ type: 'userMessage', text: msg.text, editorContextHint: msg.editorContextHint });
 				break;
 			case 'assistantThinkingDelta':
 				this.postMessage({ type: 'assistantThinkingDelta', text: msg.text });
@@ -137,12 +150,7 @@ export class ChatPanel implements vscode.WebviewViewProvider, vscode.Disposable 
 
 	private async handleWebviewMessage(message: WebviewToHostMessage): Promise<void> {
 		if (message.type === 'webviewReady') {
-			this.postMessage({ type: 'stateChanged', state: this.pipeline.getState() });
-			const pending = this.pipeline.getPendingTranscription();
-			if (typeof pending === 'string') {
-				this.postMessage({ type: 'pendingTranscription', text: pending });
-			}
-			this.postEditorContextHint(this.pipeline.getLastCapturedEditorContext());
+			this.postPipelineSnapshot();
 			if (this.readHistory) {
 				try {
 					const entries = await this.readHistory();
@@ -155,10 +163,7 @@ export class ChatPanel implements vscode.WebviewViewProvider, vscode.Disposable 
 				}
 			}
 			this.isWebviewReady = true;
-			for (const msg of this.messageQueue) {
-				this.dispatchConsumerMessage(msg);
-			}
-			this.messageQueue = [];
+			this.flushQueuedMessages();
 			return;
 		}
 		if (message.type !== 'sendPendingTranscription') {
@@ -172,24 +177,32 @@ export class ChatPanel implements vscode.WebviewViewProvider, vscode.Disposable 
 		}
 	}
 
-	private postEditorContextHint(context: PipelineEditorContext | undefined): void {
-		if (!context) {
-			this.postMessage({ type: 'editorContextHintCleared' });
-			return;
-		}
-		const startLine = context.selection.startLine + 1;
-		const startCharacter = context.selection.startCharacter + 1;
-		const endLine = context.selection.endLine + 1;
-		const endCharacter = context.selection.endCharacter + 1;
-		const rangeText = context.selection.isEmpty
-			? `${startLine}:${startCharacter}`
-			: `${startLine}:${startCharacter}-${endLine}:${endCharacter}`;
-		const hint = `${context.filePath} @ ${rangeText}`;
-		this.postMessage({ type: 'editorContextHint', text: hint });
-	}
-
 	private postMessage(message: HostToWebviewMessage): void {
 		void this.view?.webview.postMessage(message);
+	}
+
+	private canDeliverMessages(): boolean {
+		return this.isWebviewReady && this.view?.visible === true;
+	}
+
+	private flushQueuedMessages(): void {
+		if (!this.canDeliverMessages() || this.messageQueue.length === 0) {
+			return;
+		}
+		for (const msg of this.messageQueue) {
+			this.dispatchConsumerMessage(msg);
+		}
+		this.messageQueue = [];
+	}
+
+	private postPipelineSnapshot(): void {
+		this.postMessage({ type: 'stateChanged', state: this.pipeline.getState() });
+		const pending = this.pipeline.getPendingTranscription();
+		if (typeof pending === 'string') {
+			this.postMessage({ type: 'pendingTranscription', text: pending });
+			return;
+		}
+		this.postMessage({ type: 'pendingCleared' });
 	}
 
 	private getWebviewRoot(): vscode.Uri {
