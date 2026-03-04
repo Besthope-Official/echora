@@ -6,6 +6,7 @@
 [![GitHub Stars](https://img.shields.io/github/stars/Besthope-Official/echora?logo=github)](https://github.com/Besthope-Official/echora/stargazers)
 [![GitHub Issues](https://img.shields.io/github/issues/Besthope-Official/echora?logo=github)](https://github.com/Besthope-Official/echora/issues)
 [![GitHub Pull Requests](https://img.shields.io/github/issues-pr/Besthope-Official/echora?logo=github)](https://github.com/Besthope-Official/echora/pulls)
+[![GitHub License](https://img.shields.io/github/license/Besthope-Official/echora?logo=github)](https://github.com/Besthope-Official/echora/blob/main/LICENSE)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/Besthope-Official/echora/pulls)
 
 Echora is a VS Code extension that empowers your CLI agent with STT/TTS and makes it your best companion — chatting, learning, and working, always echoing to you.
