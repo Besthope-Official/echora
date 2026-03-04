@@ -3,6 +3,7 @@ import type { TextConsumer } from './consumer/types';
 import type { LogFn, TranscriberBackend, TranscriptionResult } from './stt/types';
 import type { LogFn as TtsLogFn, SpeechSynthesizerBackend } from './tts/types';
 import type { PipelineEditorContext, PipelineState, PipelineStateChange } from '../types/pipeline';
+import { shouldAttachEditorContext } from './editorContext';
 import { formatError } from '../utils/errors';
 import { logWithScope, showSharedOutputChannel } from '../utils/outputLogger';
 
@@ -439,6 +440,11 @@ export class VoicePipeline implements vscode.Disposable {
 		}
 
 		const { document, selection } = editor;
+		if (!shouldAttachEditorContext(selection)) {
+			this.log('Editor selection is empty; skipping editor context capture.');
+			return undefined;
+		}
+
 		let selectedText = document.getText(selection);
 		if (selectedText.length > MAX_EDITOR_SELECTION_CHARS) {
 			selectedText = selectedText.slice(0, MAX_EDITOR_SELECTION_CHARS);
