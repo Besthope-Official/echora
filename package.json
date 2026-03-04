@@ -2,7 +2,7 @@
   "name": "echora",
   "displayName": "Echora",
   "description": "Echora is a VS Code extension that empowers your CLI agent with STT/TTS and makes it your best companion — chatting, learning, and working, always echoing to you.",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -236,6 +236,10 @@
     "lint": "eslint src",
     "test": "vscode-test",
     "prepare": "husky"
+  },
+  "vsce": {
+    "dependencies": true,
+    "followSymlinks": true
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
