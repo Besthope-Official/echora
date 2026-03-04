@@ -33,7 +33,7 @@
         {
           "type": "webview",
           "id": "echora.chatPanel",
-          "name": "Chat",
+          "name": "echora",
           "icon": "media/icon.svg"
         }
       ]
