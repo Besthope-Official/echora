@@ -16,7 +16,7 @@ Echora is a VS Code extension that empowers your CLI agent with STT/TTS and make
 
 Echora is a UI side extension, and we recommend to use it locally for cli agent requires working on your local file system. Though you can use SSH to connect to a remote server, and run a claude instance to actually edit server side files, but it is not vscode-native, meaning that VS Code remote extension is not working, and you must opt in to do this.
 
-- NodeSpeech voice input (`@vscode/node-speech`): Local Hosted STT AI. Multi-language recognition Supported. 
+- NodeSpeech voice input (`@vscode/node-speech`): Local Hosted STT AI. Multi-language recognition Supported.
   - Realtime STT
   - VAD
 - Voice pipeline send modes
@@ -40,8 +40,15 @@ This extension contributes the following settings:
   Use `auto` to follow VS Code UI language, or set values such as `zh-CN` or `en-US`.
 - `echora.stt.sessionDurationMs`: Maximum duration (ms) for a voice input session.
 - `echora.pipeline.textConsumer`: Text consumer backend (`agent-sdk` or `mock`).
+- `echora.agentSdk.tools`: Optional SDK tool whitelist (`tools`). Keep empty to inherit project/default tool set.
+- `echora.agentSdk.allowedTools`: Auto-approved tools (`allowedTools`) such as `WebSearch`, `WebFetch`, `Write`.
+- `echora.agentSdk.disallowedTools`: Always-blocked tools (`disallowedTools`).
+- `echora.agentSdk.permissionMode`: SDK permission mode. Default `inherit` uses project/user `.claude` settings.
+- `echora.agentSdk.allowDangerouslySkipPermissions`: Required guard flag for `permissionMode = bypassPermissions`.
 - `echora.pipeline.remote`: **[Experimental]** Remote bridge configuration (`wsl:<distro>` or `ssh:<host>`). Leave empty to run locally.
 - `echora.pipeline.enableTextEditingBeforeSend`: When `true`, final voice transcription pauses in sidebar for manual review/edit and only sends after explicit user action. Default is `false` (auto-send).
+- `echora.tts.enabled`: Enable or disable local TTS playback for assistant final responses in the voice pipeline.
+- `echora.tts.backend`: TTS backend selector. Current value: `local` (`@vscode/node-speech` via VS Code Speech extension).
 
 ## Known Issues
 

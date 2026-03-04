@@ -16,6 +16,11 @@ type AgentSdkQueryOptions = {
 	env?: Record<string, string | undefined>;
 	executable?: 'node' | 'bun' | 'deno';
 	pathToClaudeCodeExecutable?: string;
+	tools?: string[] | { type: 'preset'; preset: 'claude_code' };
+	allowedTools?: string[];
+	disallowedTools?: string[];
+	permissionMode?: AgentSdkPermissionMode;
+	allowDangerouslySkipPermissions?: boolean;
 	settingSources?: AgentSdkSettingSource[];
 	stderr?: (data: string) => void;
 	spawnClaudeCodeProcess?: (options: AgentSdkSpawnOptions) => AgentSdkSpawnedProcess;
@@ -23,6 +28,16 @@ type AgentSdkQueryOptions = {
 };
 
 type AgentSdkSettingSource = 'user' | 'project' | 'local';
+type AgentSdkPermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'dontAsk';
+
+const AGENT_SDK_PERMISSION_MODES: readonly AgentSdkPermissionMode[] = [
+	'default',
+	'acceptEdits',
+	'bypassPermissions',
+	'plan',
+	'dontAsk',
+];
+const AGENT_SDK_HARD_DISALLOWED_TOOLS: readonly string[] = [];
 
 export type AgentSdkSpawnOptions = {
 	command: string;
@@ -157,21 +172,23 @@ export class AgentSdkTextConsumer implements TextConsumer, vscode.Disposable {
 				? 'injecting Echora system prompt for a new Claude session.'
 				: `reusing Claude session ${resumeSessionId}; sending user text without re-injecting system prompt.`
 		);
+		const permissionOptions = this.resolvePermissionOptions();
 
 		try {
 			for await (const streamMessage of query({
 				prompt: finalPrompt,
 				abortController,
 				options: {
-						cwd,
-						includePartialMessages: true,
-						env: buildAgentEnvironment(),
-						executable: 'node',
-						pathToClaudeCodeExecutable: sdkCliPath,
-						settingSources: ['user', 'project', 'local'],
-						stderr: onStderr,
-						resume: resumeSessionId,
-						spawnClaudeCodeProcess: spawner
+					cwd,
+					includePartialMessages: true,
+					env: buildAgentEnvironment(),
+					executable: 'node',
+					pathToClaudeCodeExecutable: sdkCliPath,
+					...permissionOptions,
+					settingSources: ['user', 'project', 'local'],
+					stderr: onStderr,
+					resume: resumeSessionId,
+					spawnClaudeCodeProcess: spawner
 						? (spawnOptions) => spawner(spawnOptions, onStderr)
 						: undefined,
 				},
@@ -361,6 +378,65 @@ export class AgentSdkTextConsumer implements TextConsumer, vscode.Disposable {
 			this.queryPromise = this.resolveQueryFn();
 		}
 		return this.queryPromise;
+	}
+
+	private resolvePermissionOptions(): Pick<
+		AgentSdkQueryOptions,
+		'tools' | 'allowedTools' | 'disallowedTools' | 'permissionMode' | 'allowDangerouslySkipPermissions'
+	> {
+		const config = vscode.workspace.getConfiguration('echora');
+		const configuredTools = normalizeToolList(config.get<unknown>('agentSdk.tools', []));
+		const configuredAllowedTools = normalizeToolList(config.get<unknown>('agentSdk.allowedTools', []));
+		const disallowedTools = uniqueToolNames([
+			...AGENT_SDK_HARD_DISALLOWED_TOOLS,
+			...normalizeToolList(config.get<unknown>('agentSdk.disallowedTools', [])),
+		]);
+		const configuredPermissionMode = config
+			.get<string>('agentSdk.permissionMode', 'inherit')
+			.trim();
+		const permissionMode = parsePermissionMode(configuredPermissionMode);
+
+		const permissionOptions: Pick<
+			AgentSdkQueryOptions,
+			'tools' | 'allowedTools' | 'disallowedTools' | 'permissionMode' | 'allowDangerouslySkipPermissions'
+		> = {};
+
+		if (configuredTools.length > 0) {
+			permissionOptions.tools = configuredTools;
+		}
+		if (configuredAllowedTools.length > 0) {
+			permissionOptions.allowedTools = configuredAllowedTools;
+		}
+		if (disallowedTools.length > 0) {
+			permissionOptions.disallowedTools = disallowedTools;
+		}
+
+		if (configuredPermissionMode && configuredPermissionMode !== 'inherit' && !permissionMode) {
+			this.log(
+				`Ignoring unknown echora.agentSdk.permissionMode value: ${configuredPermissionMode}.`
+			);
+		}
+		if (permissionMode === 'bypassPermissions') {
+			const allowDangerouslySkipPermissions = config.get<boolean>(
+				'agentSdk.allowDangerouslySkipPermissions',
+				false
+			);
+			if (allowDangerouslySkipPermissions) {
+				permissionOptions.permissionMode = 'bypassPermissions';
+				permissionOptions.allowDangerouslySkipPermissions = true;
+			} else {
+				this.log(
+					'Ignoring echora.agentSdk.permissionMode=bypassPermissions because echora.agentSdk.allowDangerouslySkipPermissions is false.'
+				);
+			}
+		} else if (permissionMode) {
+			permissionOptions.permissionMode = permissionMode;
+		}
+
+		if (Object.keys(permissionOptions).length > 0) {
+			this.log(`sdk permission overrides: ${JSON.stringify(permissionOptions)}`);
+		}
+		return permissionOptions;
 	}
 
 	private async resolveQueryFn(): Promise<AgentSdkQueryFn> {
@@ -684,6 +760,37 @@ function isExistingFile(filePath: string): boolean {
 	} catch {
 		return false;
 	}
+}
+
+function parsePermissionMode(value: string): AgentSdkPermissionMode | undefined {
+	for (const mode of AGENT_SDK_PERMISSION_MODES) {
+		if (mode === value) {
+			return mode;
+		}
+	}
+	return undefined;
+}
+
+function normalizeToolList(value: unknown): string[] {
+	if (!Array.isArray(value)) {
+		return [];
+	}
+	const names: string[] = [];
+	for (const item of value) {
+		if (typeof item !== 'string') {
+			continue;
+		}
+		const normalized = item.trim();
+		if (!normalized) {
+			continue;
+		}
+		names.push(normalized);
+	}
+	return uniqueToolNames(names);
+}
+
+function uniqueToolNames(toolNames: string[]): string[] {
+	return [...new Set(toolNames)];
 }
 
 function extractToolUseBlocks(
