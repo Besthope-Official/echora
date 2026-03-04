@@ -42,6 +42,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
 		let pendingUserText = '';
 		let pendingEditorContextHint: string | undefined;
+		let pendingThinkingContent = '';
 		let turnStartMs: number | undefined;
 		const pendingSteps: PendingStep[] = [];
 		const pendingStepById = new Map<string, PendingToolStep>();
@@ -51,9 +52,14 @@ export function activate(context: vscode.ExtensionContext): void {
 				if (msg.type === 'userMessage') {
 					pendingUserText = msg.text;
 					pendingEditorContextHint = msg.editorContextHint;
+					pendingThinkingContent = '';
 					pendingSteps.length = 0;
 					pendingStepById.clear();
 					turnStartMs = Date.now();
+				} else if (msg.type === 'assistantThinkingDelta') {
+					if (pendingUserText) {
+						pendingThinkingContent += msg.text;
+					}
 				} else if (msg.type === 'toolUse') {
 					const step: PendingToolStep = { type: 'tool', toolName: msg.toolName, inputSummary: msg.inputSummary, elapsedSeconds: 0, isError: false };
 					pendingSteps.push(step);
@@ -69,16 +75,26 @@ export function activate(context: vscode.ExtensionContext): void {
 				} else if (msg.type === 'assistantDone' && pendingUserText) {
 					const thinkingDurationSeconds = turnStartMs !== undefined ? Math.round((Date.now() - turnStartMs) / 1000) : 0;
 					const capturedSteps: ThinkingStep[] | undefined = pendingSteps.length > 0 ? [...pendingSteps] : undefined;
+					const capturedThinkingContent = pendingThinkingContent.trim().length > 0 ? pendingThinkingContent : undefined;
 					const sessionId = sessionManager.getSessionId() ?? '';
 					const userText = pendingUserText;
 					const editorContextHint = pendingEditorContextHint;
 					pendingUserText = '';
 					pendingEditorContextHint = undefined;
+					pendingThinkingContent = '';
 					pendingSteps.length = 0;
 					pendingStepById.clear();
 					turnStartMs = undefined;
 					void historyStore.append({ timestamp: new Date().toISOString(), role: 'user', content: userText, sessionId, editorContextHint })
-						.then(() => historyStore.append({ timestamp: new Date().toISOString(), role: 'assistant', content: msg.text, sessionId, thinkingSteps: capturedSteps, thinkingDurationSeconds }));
+						.then(() => historyStore.append({
+							timestamp: new Date().toISOString(),
+							role: 'assistant',
+							content: msg.text,
+							sessionId,
+							thinkingSteps: capturedSteps,
+							thinkingContent: capturedThinkingContent,
+							thinkingDurationSeconds,
+						}));
 				}
 			})
 		);

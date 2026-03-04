@@ -17,6 +17,7 @@ export interface HistoryEntry {
 	content: string;
 	sessionId: string;
 	thinkingSteps?: ThinkingStep[];
+	thinkingContent?: string;
 	thinkingDurationSeconds?: number;
 	editorContextHint?: string;
 }
