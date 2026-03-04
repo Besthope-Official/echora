@@ -71,19 +71,20 @@
         "title": "Stop Voice Pipeline",
         "category": "Echora",
         "icon": "$(stop)"
+      },
+      {
+        "command": "echora.toggleVoicePipeline",
+        "title": "Toggle Voice Pipeline",
+        "category": "Echora",
+        "icon": "$(mic)"
       }
     ],
     "menus": {
       "view/title": [
         {
-          "command": "echora.startVoicePipeline",
+          "command": "echora.toggleVoicePipeline",
           "when": "view == echora.chatPanel",
           "group": "navigation@0"
-        },
-        {
-          "command": "echora.stopVoicePipeline",
-          "when": "view == echora.chatPanel",
-          "group": "navigation@1"
         }
       ]
     },

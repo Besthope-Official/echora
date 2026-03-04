@@ -102,7 +102,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
 	const sessionCoordinator = new MicrophoneSessionCoordinator(dictationService, pipeline);
 	const dictationCommands = registerDictationCommands(sessionCoordinator);
-	const pipelineCommands = registerPipelineCommands(sessionCoordinator);
+	const pipelineCommands = registerPipelineCommands(sessionCoordinator, pipeline);
 	const statusBar = new PipelineStatusBar(pipeline);
 	const chatPanel = new ChatPanel(
 		context.extensionUri,
