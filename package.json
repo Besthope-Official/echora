@@ -117,6 +117,61 @@
           "scope": "window",
           "description": "Text consumer backend for the voice pipeline. Use 'agent-sdk' for Claude Agent SDK integration, or 'mock' for local smoke tests."
         },
+        "echora.agentSdk.tools": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "window",
+          "markdownDescription": "Optional Claude Agent SDK `tools` whitelist. Leave empty to inherit default/project tool availability. Example: `[\"WebSearch\", \"WebFetch\", \"Read\", \"Write\"]`."
+        },
+        "echora.agentSdk.allowedTools": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "window",
+          "markdownDescription": "Tool names to auto-approve via Claude Agent SDK `allowedTools`. Example: `[\"WebSearch\", \"WebFetch\"]`."
+        },
+        "echora.agentSdk.disallowedTools": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "window",
+          "markdownDescription": "Tool names to always block via Claude Agent SDK `disallowedTools`."
+        },
+        "echora.agentSdk.permissionMode": {
+          "type": "string",
+          "enum": [
+            "inherit",
+            "default",
+            "acceptEdits",
+            "dontAsk",
+            "plan",
+            "bypassPermissions"
+          ],
+          "enumDescriptions": [
+            "Use SDK/project defaults from loaded Claude settings.",
+            "Prompt for dangerous operations.",
+            "Auto-accept file edit operations.",
+            "Never prompt; deny requests not pre-approved.",
+            "Planning mode only, no tool execution.",
+            "Bypass permission checks (requires dangerous skip flag)."
+          ],
+          "default": "inherit",
+          "scope": "window",
+          "markdownDescription": "Claude Agent SDK `permissionMode`. Keep `inherit` to rely on project/user `.claude` permissions."
+        },
+        "echora.agentSdk.allowDangerouslySkipPermissions": {
+          "type": "boolean",
+          "default": false,
+          "scope": "window",
+          "markdownDescription": "When true, allows `echora.agentSdk.permissionMode = \"bypassPermissions\"`. Use only in trusted environments."
+        },
         "echora.pipeline.remote": {
           "type": "string",
           "default": "",
