@@ -254,6 +254,7 @@ export class VoicePipeline implements vscode.Disposable {
 		this.processingFinalResult = false;
 		this.shutdownBackend();
 		this.setPendingTranscription(undefined);
+		this.stopSpeakerPlayback('endSession');
 		this.transitionTo('idle', reason);
 	}
 
@@ -314,20 +315,12 @@ export class VoicePipeline implements vscode.Disposable {
 	private cancelProcessing(reason: string): void {
 		const controller = this.processingAbortController;
 		if (!controller || controller.signal.aborted) {
-			try {
-				this.speaker?.stop();
-			} catch (error) {
-				this.log(`speaker.stop() failed: ${formatError(error)}`);
-			}
+			this.stopSpeakerPlayback('cancelProcessing (no active controller)');
 			return;
 		}
 		this.log(`Cancelling consumer processing (${reason}).`);
 		controller.abort();
-		try {
-			this.speaker?.stop();
-		} catch (error) {
-			this.log(`speaker.stop() failed: ${formatError(error)}`);
-		}
+		this.stopSpeakerPlayback('cancelProcessing');
 	}
 
 	private async waitForProcessingToFinish(): Promise<void> {
@@ -531,6 +524,14 @@ export class VoicePipeline implements vscode.Disposable {
 			speaker.dispose();
 		} catch (error) {
 			this.log(`speaker.dispose() failed: ${formatError(error)}`);
+		}
+	}
+
+	private stopSpeakerPlayback(context: string): void {
+		try {
+			this.speaker?.stop();
+		} catch (error) {
+			this.log(`speaker.stop() failed during ${context}: ${formatError(error)}`);
 		}
 	}
 }

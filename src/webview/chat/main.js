@@ -110,8 +110,12 @@
 			}
 			case 'loadHistory': {
 				for (const entry of msg.entries) {
-					if (entry.role === 'assistant' && entry.thinkingSteps && entry.thinkingSteps.length > 0) {
-						container.appendChild(buildHistoryThinkingBlock(entry.thinkingSteps, entry.thinkingDurationSeconds));
+					const hasThinkingSteps = Array.isArray(entry.thinkingSteps) && entry.thinkingSteps.length > 0;
+					const hasThinkingContent = typeof entry.thinkingContent === 'string' && entry.thinkingContent.trim().length > 0;
+					if (entry.role === 'assistant' && (hasThinkingSteps || hasThinkingContent)) {
+						container.appendChild(
+							buildHistoryThinkingBlock(entry.thinkingSteps || [], entry.thinkingDurationSeconds, entry.thinkingContent)
+						);
 					}
 					const el = document.createElement('div');
 					if (entry.role === 'assistant') {
@@ -252,19 +256,7 @@
 			thinkingDetails.appendChild(summary);
 			thinkingDetails.appendChild(thinkingBlock);
 			container.appendChild(thinkingDetails);
-
-			if (!thinkingStartTime) {
-				thinkingStartTime = Date.now();
-			}
-			thinkingTimerInterval = setInterval(() => {
-				if (!thinkingDetails) {
-					return;
-				}
-				const timerEl = thinkingDetails.querySelector('.thinking-timer');
-				if (timerEl) {
-					timerEl.textContent = `${Math.round((Date.now() - thinkingStartTime) / 1000)}s`;
-				}
-			}, 1000);
+			startThinkingTimer();
 
 			scrollToBottom();
 		}
@@ -274,26 +266,32 @@
 	function ensureAssistantThinkMessage() {
 		if (!currentThinkDetails) {
 			currentThinkDetails = document.createElement('details');
-			currentThinkDetails.className = 'msg assistant think-message';
+			currentThinkDetails.className = 'thinking-details';
 			currentThinkDetails.open = false;
 
 			const summary = document.createElement('summary');
-			summary.className = 'think-summary';
+			summary.className = 'thinking-summary';
 			summary.innerHTML =
-				'<span class="think-chevron">&#9654;</span>' +
-				'<span class="think-label">think</span>';
+				'<span class="thinking-chevron">&#9654;</span>' +
+				'<span class="thinking-label">thinking</span>' +
+				'<span class="thinking-sep">...</span>' +
+				'<span class="thinking-timer">0s</span>';
 
+			const block = document.createElement('div');
+			block.className = 'thinking-block';
 			currentThinkBody = document.createElement('div');
-			currentThinkBody.className = 'think-body markdown';
+			currentThinkBody.className = 'history-think-body markdown';
 
+			block.appendChild(currentThinkBody);
 			currentThinkDetails.appendChild(summary);
-			currentThinkDetails.appendChild(currentThinkBody);
+			currentThinkDetails.appendChild(block);
 			container.appendChild(currentThinkDetails);
 		}
+		startThinkingTimer();
 		return currentThinkBody;
 	}
 
-	function buildHistoryThinkingBlock(steps, durationSeconds) {
+	function buildHistoryThinkingBlock(steps, durationSeconds, thinkingContent) {
 		const details = document.createElement('details');
 		details.className = 'thinking-details';
 
@@ -308,6 +306,15 @@
 
 		const block = document.createElement('div');
 		block.className = 'thinking-block';
+
+		const rawThinking = typeof thinkingContent === 'string' ? thinkingContent : '';
+		if (rawThinking.trim().length > 0) {
+			const thinkingEl = document.createElement('div');
+			thinkingEl.className = 'history-think-body markdown';
+			thinkingEl.dataset.rawMarkdown = rawThinking;
+			thinkingEl.innerHTML = renderMarkdown(rawThinking, { enableThinkingBlocks: false });
+			block.appendChild(thinkingEl);
+		}
 
 		for (const step of steps) {
 			if (step.type === 'tool') {
@@ -578,16 +585,43 @@
 		return null;
 	}
 
+	function startThinkingTimer() {
+		if (!thinkingStartTime) {
+			thinkingStartTime = Date.now();
+		}
+		refreshThinkingTimers();
+		if (thinkingTimerInterval) {
+			return;
+		}
+		thinkingTimerInterval = setInterval(() => {
+			refreshThinkingTimers();
+		}, 1000);
+	}
+
+	function refreshThinkingTimers() {
+		const elapsed = thinkingStartTime ? Math.round((Date.now() - thinkingStartTime) / 1000) : 0;
+		if (thinkingDetails) {
+			const timerEl = thinkingDetails.querySelector('.thinking-timer');
+			if (timerEl) {
+				timerEl.textContent = `${elapsed}s`;
+			}
+		}
+		if (currentThinkDetails) {
+			const timerEl = currentThinkDetails.querySelector('.thinking-timer');
+			if (timerEl) {
+				timerEl.textContent = `${elapsed}s`;
+			}
+		}
+	}
+
 	function finishAssistant() {
 		currentAssistantEl = null;
-		currentThinkDetails = null;
-		currentThinkBody = null;
 		if (thinkingTimerInterval) {
 			clearInterval(thinkingTimerInterval);
 			thinkingTimerInterval = null;
 		}
+		const elapsed = thinkingStartTime ? Math.round((Date.now() - thinkingStartTime) / 1000) : 0;
 		if (thinkingDetails) {
-			const elapsed = thinkingStartTime ? Math.round((Date.now() - thinkingStartTime) / 1000) : 0;
 			const labelEl = thinkingDetails.querySelector('.thinking-label');
 			const sepEl = thinkingDetails.querySelector('.thinking-sep');
 			const timerEl = thinkingDetails.querySelector('.thinking-timer');
@@ -602,6 +636,23 @@
 			}
 			thinkingDetails.open = false;
 		}
+		if (currentThinkDetails) {
+			const labelEl = currentThinkDetails.querySelector('.thinking-label');
+			const sepEl = currentThinkDetails.querySelector('.thinking-sep');
+			const timerEl = currentThinkDetails.querySelector('.thinking-timer');
+			if (labelEl) {
+				labelEl.textContent = 'thought for';
+			}
+			if (sepEl) {
+				sepEl.textContent = '';
+			}
+			if (timerEl) {
+				timerEl.textContent = `${elapsed}s`;
+			}
+			currentThinkDetails.open = false;
+		}
+		currentThinkDetails = null;
+		currentThinkBody = null;
 		thinkingDetails = null;
 		thinkingBlock = null;
 		thinkingStartTime = null;

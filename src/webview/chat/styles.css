@@ -140,51 +140,6 @@ body {
 	text-decoration: underline;
 }
 
-.think-message {
-	padding: 6px 10px;
-}
-
-.think-message summary {
-	list-style: none;
-	cursor: pointer;
-	-webkit-user-select: none;
-	user-select: none;
-}
-
-.think-message summary::-webkit-details-marker {
-	display: none;
-}
-
-.think-summary {
-	display: flex;
-	align-items: center;
-	gap: 6px;
-	font-size: 0.82em;
-	font-family: var(--vscode-editor-font-family, monospace);
-	color: var(--vscode-descriptionForeground);
-}
-
-.think-chevron {
-	display: inline-block;
-	font-size: 0.7em;
-	color: var(--vscode-charts-blue, #4fc3f7);
-	transition: transform 0.15s;
-}
-
-.think-message[open] .think-chevron {
-	transform: rotate(90deg);
-}
-
-.think-label {
-	font-weight: 600;
-}
-
-.think-body {
-	margin-top: 6px;
-	padding-top: 6px;
-	border-top: 1px solid var(--vscode-editorIndentGuide-background, rgba(128, 128, 128, 0.2));
-}
-
 .msg.error {
 	background: var(--vscode-inputValidation-errorBackground, #5a1d1d);
 	border: 1px solid var(--vscode-inputValidation-errorBorder, #be1100);
@@ -249,6 +204,71 @@ body {
 	padding: 4px 0 2px 10px;
 	border-left: 2px solid var(--vscode-editorIndentGuide-background, rgba(128, 128, 128, 0.2));
 	margin-top: 2px;
+}
+
+.history-think-body {
+	padding: 2px 0 6px;
+}
+
+.history-think-body p {
+	margin: 0 0 8px;
+}
+
+.history-think-body p:last-child {
+	margin-bottom: 0;
+}
+
+.history-think-body h1,
+.history-think-body h2,
+.history-think-body h3,
+.history-think-body h4,
+.history-think-body h5,
+.history-think-body h6 {
+	margin: 0 0 8px;
+	line-height: 1.35;
+}
+
+.history-think-body ul,
+.history-think-body ol {
+	margin: 0 0 8px 20px;
+}
+
+.history-think-body li {
+	margin: 2px 0;
+}
+
+.history-think-body blockquote {
+	margin: 0 0 8px;
+	padding-left: 10px;
+	border-left: 3px solid var(--vscode-editorIndentGuide-activeBackground, rgba(120, 120, 120, 0.5));
+	opacity: 0.95;
+}
+
+.history-think-body pre {
+	margin: 0 0 8px;
+	padding: 8px;
+	border-radius: 6px;
+	background: var(--vscode-textCodeBlock-background, rgba(0, 0, 0, 0.25));
+	overflow-x: auto;
+}
+
+.history-think-body pre code {
+	font-family: var(--vscode-editor-font-family, monospace);
+	font-size: 0.92em;
+	white-space: pre;
+}
+
+.history-think-body code {
+	font-family: var(--vscode-editor-font-family, monospace);
+	font-size: 0.92em;
+	background: var(--vscode-textCodeBlock-background, rgba(0, 0, 0, 0.18));
+	padding: 1px 4px;
+	border-radius: 4px;
+}
+
+.history-think-body a {
+	color: var(--vscode-textLink-foreground);
+	text-decoration: underline;
 }
 
 .tool-row {
